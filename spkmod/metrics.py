@@ -6,8 +6,10 @@ Definitions (per zone, per band):
               all bands analysed); the per-frequency deviation from the zone median, smoothed to 1/n
               octave, is pooled over the band's frequencies and spots
   rms         rms of that pooled tonal deviation
-  holes6/3    share of spots where some (1/n-octave smoothed) frequency in the band is more than
-              6 / 3 dB below that spot's own average over the band
+  holes6/3    share of spots where, inside the band, the spot's tonal deviation from the zone median
+              (1/n-octave smoothed) dips more than 6 / 3 dB below that spot's own mean deviation over
+              the band. Response slopes every spot shares (high-pass, crossover) cancel; only local
+              dips count
 """
 from __future__ import annotations
 
@@ -66,7 +68,7 @@ def band_metrics(f, p, bands, smoothing=6):
             continue
         band_lvl = 10 * np.log10(P2[m].mean(0) / P_REF2)       # dB SPL
         d = dev[m].ravel()
-        below = (band_lvl[None] + 10 * np.log10(P_REF2)) - Ls[m]       # how far each smoothed frequency sits below the spot's band average
+        below = dev[m].mean(0)[None] - dev[m]                   # dip below the spot's own mean tonal deviation       # how far each smoothed frequency sits below the spot's band average
         out[name] = {"median_db": float(np.median(band_lvl)), "p10": float(np.percentile(d, 10)),
                      "p90": float(np.percentile(d, 90)), "rms": float(np.sqrt(np.mean(d ** 2))),
                      "holes6_pct": float(100 * (below > 6).any(0).mean()),
@@ -169,7 +171,7 @@ def band_metrics_from_levels(centres, L, bands):
             continue
         band_lvl = 10 * np.log10(lin[m].mean(0))
         d = dev[m].ravel()
-        below = band_lvl[None] - L[m]
+        below = dev[m].mean(0)[None] - dev[m]
         out[name] = {"median_db": float(np.median(band_lvl)), "p10": float(np.percentile(d, 10)),
                      "p90": float(np.percentile(d, 90)), "rms": float(np.sqrt(np.mean(d ** 2))),
                      "holes6_pct": float(100 * (below > 6).any(0).mean()),
