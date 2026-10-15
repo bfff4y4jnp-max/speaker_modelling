@@ -21,6 +21,14 @@ A way to describe many variants of a scene and get one comparison table back, wi
 - Output: one table (CSV + text) per sweep with the metrics of item 3 per variant and band, plus the saved per-channel fields (`.npz`) so further offline changes need no re-solve.
 - CLI, for example `spkmod sweep sweep.yml`, and a Python API.
 
+## 1b. Run sweeps on GitHub Actions, using all the cores (do with or right after item 1)
+
+Peter wants to push a sweep file and get results back without anyone babysitting a machine.
+- A workflow (`workflow_dispatch` plus push of `sweeps/*.yml`) that installs spkmod (cache the venv/pip and the numba cache), runs `spkmod sweep`, and commits the result table and `.npz` back to a `results/` branch, or uploads them as an artifact. Make `runs-on` a repo variable so the runner size can be changed without editing the workflow (`ubuntu-latest` free 4-core for public repos, or a larger runner label).
+- Parallelise over frequencies. Each frequency is an independent BEM/FEM solve, so a sweep should split its frequencies (and variants) across worker processes (e.g. `cores / 4` workers with 4 numba/BLAS threads each), within the memory budget. Today one solve uses ~4 threads, so on a 64-core runner it would use only a fraction of the machine without this.
+- Print the elapsed minutes per job so cost per sweep is visible.
+- Context: GitHub's larger Linux runners cost $0.042/min (16-core), $0.082 (32) and $0.162 (64). They need the repo to sit in an organisation on the Team plan, and included free minutes don't apply to them.
+
 ## 2. Reuse solves when only placement changes
 
 Moving a box today re-meshes and re-solves the whole scene, interior FEM included. The inside of a box is the same wherever it sits. Suggested approach (your call): mesh each cabinet once in its own frame, reduce its interior FEM to an envelope-surface operator per frequency (Schur complement / impedance on the envelope nodes), cache that per cabinet + h + frequency, and on each layout only transform it and solve the exterior BEM. Combined with item 1 this should make layout sweeps several times faster. A check against a full solve of the current stack scene should agree to ~0.1 dB.
