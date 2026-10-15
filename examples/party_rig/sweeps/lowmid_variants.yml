@@ -1,6 +1,7 @@
 # Low-mid geometry variants from the low-mid thread (outdoor_lowmid/lm3d_variants.py; specs, README and
 # variants.json copied to cad/lm3d/). Static STEPs built with spkmod cad (generated STEPs lose their fields at merge).
 # Low-mid alone on the ground (subs removed): throat impedance (fields Z), ground SPL/V at 1 and 2 m, floor.
+# v02_cav61 and v12_plug: frame cutout 290 mm (282 = the hole bore gave coincident faces and a gmsh PLC error on the runners).
 project: ../project.yml
 scenes: [stack]
 frequencies: {min: 70, max: 500, per_octave: 24}
@@ -31,7 +32,7 @@ variants:
     project:
       solver: {refine_gaps: true}
       cabinets:
-        lowmid_v02_cav61: {step: cad/lm3d/lowmid_v02_cav61.step, pistons: [{name: drv_a, center: [0.2478, 0.178, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2478, 0.498, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}]}
+        lowmid_v02_cav61: {step: cad/lm3d/lowmid_v02_cav61.step, pistons: [{name: drv_a, center: [0.2478, 0.178, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2478, 0.498, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}]}
   - name: v07_divnone
     remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
     replace: {lowmid: {cabinet: lowmid_v07_divnone}}
@@ -101,4 +102,4 @@ variants:
     project:
       solver: {refine_gaps: true}
       cabinets:
-        lowmid_v12_plug: {step: cad/lm3d/lowmid_v12_plug.step, pistons: [{name: drv_a, center: [0.2478, 0.178, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2478, 0.498, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}]}
+        lowmid_v12_plug: {step: cad/lm3d/lowmid_v12_plug.step, pistons: [{name: drv_a, center: [0.2478, 0.178, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2478, 0.498, 0.3323], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}]}
