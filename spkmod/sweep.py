@@ -268,6 +268,8 @@ def _solve_group(job):
                 sc = pr.cfg["scenes"][s]
                 ground = sc.get("ground", True)
                 fs = freqs[(freqs >= (sc.get("min_freq") or 0) * 0.999) & (freqs <= (sc.get("max_freq") or 1e9) * 1.001)]
+                if not len(fs):             # a frequency shard outside this scene's range
+                    continue
                 results[s] = solve_scene(pr.cabinets(s), fs, points=points, directions=None, ground=ground,
                                          image_points=not ground, air=pr.air, settings=pr.settings,
                                          center=sc.get("acoustic_center"))
@@ -332,14 +334,14 @@ def variant_response(pr, F, mode, off):
 
 
 # --------------------------------------------------------------------------- driver
-def run_sweep(path, parallel=None, only=None, dry_run=False):
-    from .metrics import compare_to_reference, format_table, parse_bands, per_frequency, zone_table
+def prepare(path, only=None, out=None, quiet=False):
+    """Resolve a sweep file: variants, their project configs, solve groups, points, zones, frequencies."""
     from .project import Project
     sweep_dir = os.path.dirname(os.path.abspath(path))
     with open(path) as fh:
         spec = yaml.safe_load(fh)
     name = spec.get("name") or os.path.splitext(os.path.basename(path))[0]
-    out_dir = os.path.join(sweep_dir, spec.get("out") or os.path.join("sweeps", name))
+    out_dir = os.path.abspath(out) if out else os.path.join(sweep_dir, spec.get("out") or os.path.join("sweeps", name))
     os.makedirs(os.path.join(out_dir, "fields"), exist_ok=True)
     os.makedirs(os.path.join(out_dir, "variants"), exist_ok=True)
     proj_path = os.path.join(sweep_dir, spec["project"])
@@ -380,13 +382,25 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
             if fpath not in [f[-1] for f in g["fields"]]:
                 g["fields"].append((cfg, proj_dir, scenes, freqs, points, fpath))
             g["variants"].append(vname)
+    ctx = dict(spec=spec, name=name, sweep_dir=sweep_dir, out_dir=out_dir, proj_dir=proj_dir, solver=solver,
+               scenes=scenes, points=points, zones=zones, freqs=freqs, plan=plan, groups=groups, n_variants=len(variants),
+               band_octaves=base_pr.settings.band_octaves, h_max=base_pr.settings.h_max,
+               epw=base_pr.settings.elements_per_wavelength, c=base_pr.air.c)
+    if quiet:
+        return ctx
     print(f"sweep {name}: {len(variants)} variants, {len(groups)} acoustic solves needed "
           f"({len(plan) - sum(len(g['variants']) for g in groups.values())} variants already have fields), "
           f"{len(points)} points, {len(freqs)} freqs, zones: {', '.join(f'{z}({len(i)})' for z, i in zones.items())}")
     for g in groups.values():
         print(f"  solve {g['key']}: {', '.join(g['variants'])}")
+    return ctx
+
+
+def run_sweep(path, parallel=None, only=None, dry_run=False, out=None):
+    ctx = prepare(path, only, out)
     if dry_run:
         return None
+    spec, solver, groups = ctx["spec"], ctx["solver"], ctx["groups"]
 
     n_par = max(1, int(parallel or spec.get("parallel", 1)))
     if groups:
@@ -433,6 +447,15 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
             for j, exc in failed:
                 print(f"  {', '.join(j['variants'])}: {exc!r}")
 
+    return tables(ctx)
+
+
+def tables(ctx):
+    """Comparison tables from the saved fields (no solving)."""
+    from .metrics import compare_to_reference, format_table, parse_bands, per_frequency, zone_table
+    from .project import Project
+    spec, name, out_dir, sweep_dir, proj_dir = ctx["spec"], ctx["name"], ctx["out_dir"], ctx["sweep_dir"], ctx["proj_dir"]
+    plan, points, zones = ctx["plan"], ctx["points"], ctx["zones"]
     # ---------------------------------------------------------------- tables
     mode = spec.get("dsp", "project")
     smoothing = spec.get("smoothing", 6)
@@ -491,6 +514,83 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
     print(txt)
     print(f"\nwritten: {os.path.join(out_dir, 'table.csv')}, table.txt, fields/, variants/")
     return rows
+
+
+# --------------------------------------------------------------------------- sharding (GitHub Actions, Slurm)
+def shards(ctx, max_jobs=20):
+    """Split the needed solves into independent shards: (solve group, whole frequency bands).
+
+    Shards are unions of whole bands of the full run, so each band keeps the mesh it would get in an
+    unsharded run (h from the band's top frequency) and the merged results match a single-machine run
+    (exactly for scenes starting at the sweep's first frequency). Cheapest neighbours are merged until
+    there are at most max_jobs shards.
+    """
+    from .scene import _bands
+    out = []
+    for g in ctx["groups"].values():
+        for fb in _bands(ctx["freqs"], ctx["band_octaves"]):
+            h = min(ctx["h_max"], ctx["c"] / (fb.max() * ctx["epw"]))
+            out.append({"group": g["key"], "freqs": [float(x) for x in fb],
+                        "cost": len(fb) * (ctx["h_max"] / h) ** 4 + 30})
+    while len(out) > max_jobs:
+        pairs = [(out[i]["cost"] + out[i + 1]["cost"], i) for i in range(len(out) - 1)
+                 if out[i]["group"] == out[i + 1]["group"]]
+        if not pairs:
+            break
+        _, i = min(pairs)
+        b = out.pop(i + 1)
+        out[i]["freqs"] += b["freqs"]
+        out[i]["cost"] += b["cost"]
+    for i, s in enumerate(out):
+        s["shard"] = i
+    return out
+
+
+def solve_shard(ctx, i, max_jobs=20):
+    """Solve one shard; writes parts/<field key>__<i>.npz for every field of its group."""
+    s = shards(ctx, max_jobs)[i]
+    g = ctx["groups"][s["group"]]
+    parts = os.path.join(ctx["out_dir"], "parts")
+    os.makedirs(parts, exist_ok=True)
+    fq = np.asarray(s["freqs"])
+    fields = [(cfg, pd, sc, fq, pts, os.path.join(parts, os.path.basename(fpath)[:-4] + f"__{i}.npz"))
+              for cfg, pd, sc, _, pts, fpath in g["fields"]]
+    t0 = time.time()
+    _solve_group({"key": g["key"], "fields": fields, "variants": g["variants"]})
+    return time.time() - t0
+
+
+def merge_shards(ctx):
+    """Join shard parts along frequency into fields/<key>.npz (channels and bodies matched by name)."""
+    from .scene import _atomic_savez
+    parts = os.path.join(ctx["out_dir"], "parts")
+    by_key = {}
+    for fn in sorted(os.listdir(parts)) if os.path.isdir(parts) else []:
+        if fn.endswith(".npz") and "__" in fn:
+            by_key.setdefault(fn.split("__")[0], []).append(load_fields(os.path.join(parts, fn)))
+    for key, P in by_key.items():
+        P.sort(key=lambda F: float(F["freqs"][0]))
+        f = np.concatenate([F["freqs"] for F in P])
+        chans = sorted({str(c) for F in P for c in F["channels"]})
+        bodies = sorted({(str(c), str(b)) for F in P for c, b in zip(F["body_channel"], F["body_name"])})
+        npts = P[0]["points"].shape[0]
+        p = np.zeros((len(chans), len(f), npts), np.complex64)
+        Z = np.full((len(chans), len(f)), np.inf, np.complex64)
+        cov = np.zeros((len(chans), len(f)), bool)
+        x = np.zeros((len(bodies), len(f)), np.complex64)
+        o = 0
+        for F in P:
+            n = len(F["freqs"])
+            for j, c in enumerate(map(str, F["channels"])):
+                k = chans.index(c)
+                p[k, o:o + n], Z[k, o:o + n], cov[k, o:o + n] = F["p"][j], F["Z"][j], F["covered"][j]
+            for j, cb in enumerate(zip(map(str, F["body_channel"]), map(str, F["body_name"]))):
+                x[bodies.index(cb), o:o + n] = F["x"][j]
+            o += n
+        _atomic_savez(os.path.join(ctx["out_dir"], "fields", f"{key}.npz"), freqs=f, points=P[0]["points"],
+                      channels=np.array(chans), p=p, Z=Z, covered=cov, body_channel=np.array([c for c, _ in bodies]),
+                      body_name=np.array([b for _, b in bodies]), x=x)
+    return sorted(by_key)
 
 
 def _write_csv(path, rows, keys):

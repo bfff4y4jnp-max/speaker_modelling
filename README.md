@@ -37,6 +37,24 @@ Handover for the design project (creating cabinet specs without CAD software): `
 The party-rig template is `examples/party_rig/project.yml`. Fill in its TODOs
 (STEP files, driver data, layout, CamillaDSP config).
 
+## Free sharded runs on GitHub Actions
+
+Push a sweep file (any `sweeps/*.yml`), or start **Actions → solve → Run workflow** with its path. The workflow:
+1. splits the sweep into shards: each acoustic solve × whole frequency bands, up to 20 at once on free runners (4 cores, 16 GB, 6 h each);
+2. solves each shard on its own runner;
+3. merges the shards and writes the tables;
+4. commits `runs/<name>/` to the same branch: `table.csv` / `.txt`, `perfreq.csv`, `reference.csv`, and `fields/`.
+
+Shards are made of whole bands of the full run, so the merged result matches a single-machine run (tested). Committed fields mean later offline variants, and reruns of the same sweep, only solve what's missing.
+
+Locally, `spkmod sweep S --out runs/<name>` uses the committed fields. The same commands also work on a Slurm cluster:
+```bash
+spkmod sweep S --out D --shards      # JSON list of shard ids
+spkmod sweep S --out D --shard i     # solve one shard into D/parts
+spkmod sweep S --out D --merge       # join the parts, write the tables
+```
+`runs/<name>.yml` requests (`spkmod job plan/solve/merge`) shard a whole project the same way, and `spkmod report --results` reports on the merged results. The runner type is the repo variable `SPKMOD_RUNNER` (default `ubuntu-latest`).
+
 ## Sweeps: many variants, one table
 
 ```bash

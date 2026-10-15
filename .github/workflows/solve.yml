@@ -1,0 +1,141 @@
+# Sharded FEM/BEM solves on free GitHub-hosted runners (public repo: no minute limit, ~20 jobs at once).
+#
+# Start a run by
+#   * pushing a new or changed sweep file  **/sweeps/<name>.yml  (spkmod sweep), or a run request
+#     runs/<name>.yml (spkmod job: a whole project), on any branch, or
+#   * Actions tab -> solve -> Run workflow, with the file path (manual runs need this file on main).
+# Sweeps are split into shards = (acoustic solve group x whole frequency bands); each shard runs on its own
+# runner, a final job joins them and writes the tables. Results are committed to runs/<name>/ on the same
+# branch: table.csv/.txt, perfreq.csv, reference.csv, fields/ (per-channel fields: later offline variants
+# need no solve; a rerun only solves what is missing). Runner type: repo variable SPKMOD_RUNNER.
+name: solve
+
+on:
+  push:
+    paths: ["**/sweeps/*.yml", "runs/*.yml"]
+  workflow_dispatch:
+    inputs:
+      request:
+        description: "Sweep file (e.g. examples/party_rig/sweeps/sub_layouts.yml) or run request (runs/<name>.yml)"
+        required: true
+      max_jobs:
+        description: "Maximum parallel shards"
+        default: "20"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: solve-${{ github.ref }}-${{ inputs.request || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ${{ vars.SPKMOD_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      request: ${{ steps.req.outputs.request }}
+      kind: ${{ steps.req.outputs.kind }}
+      name: ${{ steps.req.outputs.name }}
+      shards: ${{ steps.plan.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - id: req
+        shell: bash
+        run: |
+          r="${{ inputs.request }}"
+          if [ -z "$r" ]; then
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$before" 2>/dev/null; then before="HEAD~1"; fi
+            changed=$(git diff --name-only --diff-filter=AM "$before" HEAD | grep -E '(^|/)sweeps/[^/]+\.yml$|^runs/[^/]+\.yml$' || true)
+            r=$(echo "$changed" | head -1)
+            n=$(echo "$changed" | grep -c . || true)
+            if [ "$n" -gt 1 ]; then echo "::warning::$n sweep/run files changed; solving $r only (use Run workflow for the others)"; fi
+          fi
+          test -n "$r" || { echo "no sweep or run request changed"; exit 1; }
+          case "$r" in runs/*) kind=job ;; *) kind=sweep ;; esac
+          echo "request=$r" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$r" .yml)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup
+      - id: plan
+        shell: bash
+        run: |
+          req="${{ steps.req.outputs.request }}"; out="runs/${{ steps.req.outputs.name }}"
+          if [ "${{ steps.req.outputs.kind }}" = sweep ]; then
+            spkmod sweep "$req" --out "$out" --dry-run
+            shards=$(spkmod sweep "$req" --out "$out" --shards --max-jobs "${{ inputs.max_jobs || 20 }}" | tail -1)
+          else
+            spkmod job plan "$req" --summary
+            shards=$(spkmod job plan "$req" | tail -1)
+          fi
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "### Plan: $req -> $out" >> "$GITHUB_STEP_SUMMARY"
+          echo "shards: $shards" >> "$GITHUB_STEP_SUMMARY"
+
+  solve:
+    needs: plan
+    if: needs.plan.outputs.shards != '[]'
+    runs-on: ${{ vars.SPKMOD_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - shell: bash
+        run: |
+          t0=$(date +%s)
+          req="${{ needs.plan.outputs.request }}"; out="runs/${{ needs.plan.outputs.name }}"
+          if [ "${{ needs.plan.outputs.kind }}" = sweep ]; then
+            spkmod sweep "$req" --out "$out" --shard ${{ matrix.shard }} --max-jobs "${{ inputs.max_jobs || 20 }}"
+            mkdir -p shard_out && cp "$out"/parts/*.npz shard_out/
+          else
+            spkmod job solve "$req" --part ${{ matrix.shard }} --out shard_out/part_${{ matrix.shard }}.npz
+          fi
+          echo "shard ${{ matrix.shard }}: $(( ($(date +%s) - t0) / 60 )) min" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard_out/
+          retention-days: 7
+
+  merge:
+    needs: [plan, solve]
+    if: always() && needs.plan.result == 'success' && (needs.solve.result == 'success' || needs.solve.result == 'skipped')
+    runs-on: ${{ vars.SPKMOD_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        if: needs.solve.result == 'success'
+        with: {pattern: shard-*, path: shard_in, merge-multiple: true}
+      - shell: bash
+        run: |
+          req="${{ needs.plan.outputs.request }}"; out="runs/${{ needs.plan.outputs.name }}"
+          if [ "${{ needs.plan.outputs.kind }}" = sweep ]; then
+            mkdir -p "$out/parts" && cp shard_in/*.npz "$out/parts/" 2>/dev/null || true
+            spkmod sweep "$req" --out "$out" --merge
+            rm -rf "$out/parts" "$out/variants"
+            cat "$out/table.txt" >> "$GITHUB_STEP_SUMMARY"
+          else
+            project=$(python -c "import yaml; print(yaml.safe_load(open('$req'))['project'])")
+            spkmod job merge "$req" --parts shard_in --out "$out"
+            spkmod report "$project" --results "$out/results" --out "$out/report"
+            cat "$out/report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ needs.plan.outputs.name }}
+          path: runs/${{ needs.plan.outputs.name }}
+      - name: commit results
+        shell: bash
+        run: |
+          git config user.name "spkmod-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "runs/${{ needs.plan.outputs.name }}"
+          git commit -q -m "Results: ${{ needs.plan.outputs.request }} (run ${{ github.run_id }})" || exit 0
+          for i in 1 2 3 4 5; do git pull -q --rebase && git push -q && break || sleep $((2**i)); done

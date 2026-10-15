@@ -66,14 +66,18 @@ class SceneResult:
     ground: bool = True
     meta: dict = field(default_factory=dict)
 
-    def save(self, path):
+    def save(self, path, compact=False):
+        """compact=True stores complex64 (about 1e-7 relative error, half the size)."""
         d = {k: v for k, v in self.__dict__.items() if v is not None and k not in ("meta", "body_names")}
+        if compact:
+            d = {k: (v.astype(np.complex64) if np.iscomplexobj(v) else v) for k, v in d.items()}
         _atomic_savez(path, body_names=np.array(self.body_names), meta=json.dumps(self.meta), **d)
 
     @classmethod
     def load(cls, path):
         z = np.load(path, allow_pickle=False)
-        kw = {k: z[k] for k in z.files if k not in ("meta", "body_names")}
+        kw = {k: (z[k].astype(complex) if np.iscomplexobj(z[k]) else z[k]) for k in z.files
+              if k not in ("meta", "body_names")}
         kw["ground"] = bool(kw.get("ground", True))
         return cls(body_names=[str(s) for s in z["body_names"]], meta=json.loads(str(z["meta"])), **kw)
 

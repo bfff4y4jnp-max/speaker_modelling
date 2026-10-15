@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 
 import numpy as np
 
@@ -37,6 +38,10 @@ def cmd_mesh(pr, a):
 
 def _scenes(pr, a):
     names = [a.scene] if a.scene else list(pr.cfg["scenes"])
+    if getattr(a, "results", None):          # merged results from a batch run (no solving)
+        from .scene import SceneResult
+        return {n: SceneResult.load(os.path.join(a.results, f"{n}.npz")) for n in names
+                if os.path.exists(os.path.join(a.results, f"{n}.npz"))}
     return {n: pr.solve(n, a.fmin, a.fmax, a.per_octave) for n in names}
 
 
@@ -130,6 +135,24 @@ def cmd_report(pr, a):
     print("report written to", a.out)
 
 
+def cmd_job(a):
+    import json
+    from . import jobs
+    req = jobs.load_request(a.request)
+    if a.action == "plan":
+        p = jobs.plan(req)
+        if a.summary:
+            for j in p:
+                print(f"part {j['part']:2d} {j['scene']:10s} {j['freqs'][0]:8.1f}-{j['freqs'][-1]:8.1f} Hz "
+                      f"{len(j['freqs']):3d} freqs  cost {j['cost']:.0f}")
+        else:
+            print(json.dumps([j["part"] for j in p]))
+    elif a.action == "solve":
+        jobs.solve_part(req, a.part, a.out)
+    elif a.action == "merge":
+        print(json.dumps(jobs.merge_run(req, a.parts, a.out), indent=1))
+
+
 def cmd_compare(a):
     import csv
     from .metrics import compare_to_reference, diff_rows, parse_bands
@@ -184,6 +207,7 @@ def main(argv=None):
         if name == "report":
             p.add_argument("--out", default="report")
             p.add_argument("--preset")
+            p.add_argument("--results", help="directory of merged <scene>.npz (skip solving)")
             p.add_argument("--reference", help="floor-model CSV (x,y,z + sixth-octave levels) to compare the floor with")
     ps = sub.add_parser("sweep", help="many variants of a project -> one comparison table")
     ps.add_argument("spec")
@@ -191,6 +215,18 @@ def main(argv=None):
     ps.add_argument("--only", help="comma-separated variant names")
     ps.add_argument("--dry-run", action="store_true", help="list variants and the solves needed")
     ps.add_argument("-v", "--verbose", action="store_true")
+    ps.add_argument("--out", help="output directory (default: the sweep's out: or sweeps/<name>)")
+    ps.add_argument("--shards", action="store_true", help="print the shard list as JSON (batch runs)")
+    ps.add_argument("--shard", type=int, help="solve one shard into <out>/parts")
+    ps.add_argument("--merge", action="store_true", help="join <out>/parts into fields, then write the tables")
+    ps.add_argument("--max-jobs", type=int, default=20)
+    pj = sub.add_parser("job", help="batch runs of a project: plan / solve one part / merge (GitHub Actions, Slurm)")
+    pj.add_argument("action", choices=["plan", "solve", "merge"])
+    pj.add_argument("request", help="run request YAML (runs/<name>.yml)")
+    pj.add_argument("--part", type=int)
+    pj.add_argument("--parts", help="directory of part .npz files (merge)")
+    pj.add_argument("--out")
+    pj.add_argument("--summary", action="store_true")
     pc2 = sub.add_parser("compare", help="difference tables: two sweep variants, or a variant vs a reference CSV")
     pc2.add_argument("sweep_dir", help="sweep output directory (with table.csv and variants/)")
     pc2.add_argument("--a", help="variant A (difference = B - A)")
@@ -203,10 +239,32 @@ def main(argv=None):
     if a.cmd == "compare":
         cmd_compare(a)
         return
+    if a.cmd == "job":
+        _setup(False)
+        cmd_job(a)
+        return
     if a.cmd == "sweep":
         _setup(a.verbose)
-        from .sweep import run_sweep
-        run_sweep(a.spec, a.parallel, a.only.split(",") if a.only else None, a.dry_run)
+        from . import sweep as sw
+        only = a.only.split(",") if a.only else None
+        if a.shards or a.shard is not None or a.merge:
+            import json
+            ctx = sw.prepare(a.spec, only, a.out, quiet=a.shards)
+            if a.shards:
+                sh = sw.shards(ctx, a.max_jobs)
+                for s in sh:
+                    print(f"shard {s['shard']:2d} group {s['group']} {s['freqs'][0]:7.1f}-{s['freqs'][-1]:7.1f} Hz "
+                          f"{len(s['freqs']):3d} freqs cost {s['cost']:.0f}", file=sys.stderr)
+                print(json.dumps([s["shard"] for s in sh]))
+            elif a.shard is not None:
+                t = sw.solve_shard(ctx, a.shard, a.max_jobs)
+                print(f"shard {a.shard} solved in {t / 60:.1f} min")
+            else:
+                keys = sw.merge_shards(ctx)
+                print(f"merged {len(keys)} fields")
+                sw.tables(sw.prepare(a.spec, only, a.out, quiet=True))
+        else:
+            sw.run_sweep(a.spec, a.parallel, only, a.dry_run, a.out)
         return
     if a.cmd == "cad":
         from .cadgen import build
