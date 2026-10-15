@@ -71,3 +71,15 @@ def test_per_frequency_and_diff():
     d = diff_rows([{"zone": "a", "band": "b", "median_db": 90, "p10": -1, "p90": 1}],
                   [{"zone": "a", "band": "b", "median_db": 92, "p10": -2, "p90": 1}], keys=("median_db", "p10", "p90"))
     assert d == [{"zone": "a", "band": "b", "d_median_db": 2.0, "d_p10": -1.0, "d_p90": 0.0}]
+
+
+def test_shared_slope_is_not_a_hole():
+    """A steep high-pass that every spot shares must not count as a hole; a local dip at one spot must."""
+    f = log_freqs(25, 60, 48)
+    slope = (f / 40.0) ** 4                       # ~-12 dB across the 25-30 band
+    p = np.ones((len(f), 20), complex) * slope[:, None]
+    m = band_metrics(f, p, {"25-30": (25, 30), "30-60": (30, 60)}, smoothing=0)
+    assert m["25-30"]["holes3_pct"] == 0 and m["25-30"]["holes6_pct"] == 0
+    p[np.argmin(abs(f - 45)), 3] *= 0.1           # -20 dB at one spot
+    m = band_metrics(f, p, {"30-60": (30, 60)}, smoothing=0)
+    assert m["30-60"]["holes6_pct"] == 5.0

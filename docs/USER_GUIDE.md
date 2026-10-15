@@ -198,7 +198,7 @@ What triggers a new solve, and what doesn't:
 Columns of `table.csv`, per zone and band:
 * `median_db`: median over spots of the band level (power average over the band), in dB SPL at 0 dBFS program through the DSP and amps. `d_median_db` is the same against the reference variant.
 * `p10`, `p90`, `rms` (tonal spread): each spot is first normalised to its own overall level over the analysed bands. Its 1/6-octave-smoothed deviation from the zone median is then pooled over the band's frequencies and spots.
-* `holes6_pct`, `holes3_pct`: share of spots where some smoothed frequency in the band sits more than 6 or 3 dB below that spot's own band average.
+* `holes6_pct`, `holes3_pct`: share of spots where, inside the band, the spot's smoothed tonal deviation from the zone median dips more than 6 or 3 dB below that spot's own mean deviation over the band. Slopes shared by every spot (a high-pass, a crossover) cancel, so only local dips count.
 * `x_peak_mm`: largest peak cone excursion in the band at 0 dBFS (sine), over all drivers.
 
 Comparisons:
