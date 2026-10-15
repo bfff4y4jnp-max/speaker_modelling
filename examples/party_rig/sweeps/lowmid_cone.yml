@@ -1,0 +1,23 @@
+# Low-mid cone dish: the 3D model's pistons are flat discs, so the air in each 12-280-W cone (~1.5 L, ~3 L for
+# two) is missing from the front chamber (1D/Hornresp: ~7-9 L including the dishes; 3D flat: ~4-5 L). Recess
+# each piston by the mean dish depth (dish volume / Sd, about cone depth / 3) inside a basket ring, and compare.
+# Suspected cause of the 3D-only +2.5..3.8 dB at 250-280 Hz. Low-mid alone, in the stack scene position.
+#   spkmod sweep examples/party_rig/sweeps/lowmid_cone.yml --dry-run
+project: ../project.yml
+scenes: [stack]
+frequencies: {min: 70, max: 450, per_octave: 24}
+dsp: flat
+bands: sixth
+reference: flat
+variants:
+  - name: flat            # as built in project.yml: pistons at the baffle mid-thickness
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    project: {solver: {refine_gaps: true}}   # 8 mm front chamber, 5-10 mm basket gaps
+  - name: recess30        # 30 mm: ~1.5 L per cone (90 mm deep cone, estimated)
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    project: {solver: {refine_gaps: true}}   # 8 mm front chamber, 5-10 mm basket gaps
+    cabinets: {lowmid: {generator: ../make_specs.py:lowmid_from_params, params: {recess_mm: 30}}}
+  - name: recess45        # 45 mm: ~2.3 L per cone (upper bound)
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    project: {solver: {refine_gaps: true}}   # 8 mm front chamber, 5-10 mm basket gaps
+    cabinets: {lowmid: {generator: ../make_specs.py:lowmid_from_params, params: {recess_mm: 45}}}

@@ -109,7 +109,9 @@ def sub_spec(name):
 
 
 # ------------------------------------------------------------------ low-mid folded horn
-def lowmid_spec():
+def lowmid_spec(recess_mm=0.0, out=None):
+    """recess_mm > 0 moves each piston back (up, into a 310 mm basket ring on the baffle) so the front chamber
+    includes the cone dish: mean dish depth = dish volume / Sd (about cone depth / 3)."""
     T, Wx = 18.0, 676.0
     W = Wx - 2 * T
     D, Hh = 496.0, 468.0
@@ -161,13 +163,31 @@ def lowmid_spec():
          prism("fillet_under_p3", sec([(478, 187), (440, 187), (478, 148)]), (T, T + W)),
          prism("mouth_divider", sec(div), (Wx / 2 - 9, Wx / 2 + 9)),
          "cutouts:"]
+    r = float(recess_mm)
+    up = -nd                                                 # into the rear chamber (behind the cones)
+    pc = c2 + r * up                                         # piston centre, recessed by r
+    if r > 0:                                                # basket ring: solid 310 mm cylinder from the baffle top to past the piston back
+        k = L.index("cutouts:")
+        for nm, yy in zip(("a", "b"), yc):
+            cb = c2 + ((17 + 19 + r) / 2 - 9) * up        # u 17 (1 mm into the baffle) .. 19 + r (6 mm past the piston back)
+            L.insert(k, "  - {type: cylinder, name: basket_%s, center: [%s, %s, %s], axis: %s, diameter: 310, length: %s}   # cone recess %g mm"
+                     % (nm, f(cb[0]), f(yy), f(cb[1]), ax, f(r + 2), r))
+            k += 1
     for nm, yy in zip(("a", "b"), yc):
-        L.append("  - {type: cylinder, name: hole_%s, center: [%s, %s, %s], axis: %s, diameter: %d, depth: 20}" % (nm, f(c2[0]), f(yy), f(c2[1]), ax, D12["cutout"]))
+        ch = c2 + ((-1 + 20 + r) / 2 - 9) * up if r > 0 else c2   # u -1 .. 20 + r: right through the basket
+        L.append("  - {type: cylinder, name: hole_%s, center: [%s, %s, %s], axis: %s, diameter: %d, depth: %s}" % (nm, f(ch[0]), f(yy), f(ch[1]), ax, D12["cutout"], f(21 + r) if r > 0 else 20))
     L.append("pistons:")
     for nm, yy in zip(("a", "b"), yc):
         L.append("  - {name: drv_%s, center: [%s, %s, %s], axis: %s, sd_cm2: %s, cutout: %d, thickness: %d, motor: %s}   # motor size estimated"
-                 % (nm, f(c2[0]), f(yy), f(c2[1]), ax, D12["sd_cm2"], D12["cutout"], D12["thickness"], D12["motor"]))
-    open(os.path.join(SPECS, "lowmid.yml"), "w").write("\n".join(L) + "\n")
+                 % (nm, f(pc[0]), f(yy), f(pc[1]), ax, D12["sd_cm2"], D12["cutout"] + (8 if r > 0 else 0), D12["thickness"], D12["motor"]))
+    path = out or os.path.join(SPECS, "lowmid.yml" if r == 0 else "lowmid_recess%g.yml" % r)
+    open(path, "w").write("\n".join(L) + "\n")
+    return path
+
+
+def lowmid_from_params(recess_mm=0.0):
+    """Sweep generator: low-mid spec with the pistons recessed by recess_mm (cone dish in the front chamber)."""
+    return lowmid_spec(recess_mm)
 
 
 # ------------------------------------------------------------------ pole box
