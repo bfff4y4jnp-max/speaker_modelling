@@ -1,0 +1,24 @@
+name: fill
+units: mm
+# Stereo fill: ~10 L sealed, 2 x Dayton PC105-4 stacked 110 mm apart (outdoor_fills page: 140 x 560 x 180 mm,
+#   12 mm ply). Starter A build; the 4-driver upgrade adds two outer holes (not modelled here).
+# orientation: x = forward (baffle front at x = 180), y = width (0..140), z = up from the box bottom.
+#   The box is aimed in layout.yml (yaw towards the floor centre, 12.8 deg down).
+# SELF-CHECK (HANDOVER 3.7)
+# 1. Sealed box, no path. 2. Net air: 116 x 536 x 156 = 9.7 L gross, ~9.5 L after the motors (design ~10 L).
+# 3. Panels butt-jointed with the sides full height. Loose wadding fill: 'stuffing' in project.yml.
+# 4. Pistons a (lower) / b (upper): baffle mid-thickness, front = +x. Cut-out 93 mm is an ESTIMATE
+#    (Dayton PC105-4 datasheet: check), motor estimated.
+parts:
+  - {type: box, name: side_l, at: [0.0, 0.0, 0.0], size: [180.0, 12.0, 560.0]}
+  - {type: box, name: side_r, at: [0.0, 128.0, 0.0], size: [180.0, 12.0, 560.0]}
+  - {type: box, name: bottom, at: [0.0, 12.0, 0.0], size: [180.0, 116.0, 12.0]}
+  - {type: box, name: top, at: [0.0, 12.0, 548.0], size: [180.0, 116.0, 12.0]}
+  - {type: box, name: back, at: [0.0, 12.0, 12.0], size: [12.0, 116.0, 536.0]}
+  - {type: box, name: baffle, at: [168.0, 12.0, 12.0], size: [12.0, 116.0, 536.0]}
+cutouts:
+  - {type: cylinder, name: hole_a, center: [174.0, 70, 225.0], axis: [1, 0, 0], diameter: 93, depth: 30}
+  - {type: cylinder, name: hole_b, center: [174.0, 70, 335.0], axis: [1, 0, 0], diameter: 93, depth: 30}
+pistons:
+  - {name: a, center: [174.0, 70, 225.0], axis: [1, 0, 0], sd_cm2: 52.8, cutout: 93, thickness: 6, motor: [70, 40]}
+  - {name: b, center: [174.0, 70, 335.0], axis: [1, 0, 0], sd_cm2: 52.8, cutout: 93, thickness: 6, motor: [70, 40]}

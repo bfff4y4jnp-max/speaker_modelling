@@ -1,0 +1,42 @@
+name: lowmid
+units: mm
+# Low-mid folded front horn, 2 x 12-280-W, straight-cut 18 mm ply build (Low-Mid Ground Horn page,
+#   outdoor_lowmid/build_section.py). External 496 deep x 676 wide x 468 high.
+# orientation: as used, standing on the ground. x = forward, rear panel at x = 0, mouth at x = 496;
+#   y = width (0..676); z = up, ground at z = 0. Section coordinates in the build drawing are
+#   (d back from the front face, z), so x = 496 - d.
+# SELF-CHECK (HANDOVER 3.7)
+# 1. Air path (inner width 640 mm): cones fire down into the front chamber (8 mm gap between the baffle
+#    and the chamber floor P3, ~7 L with the cone dish) -> 40 mm slot at the front (d 18-58, 256 cm2)
+#    -> leg B, back between P1 and P3 (~410 mm, 256 -> ~480 cm2) -> 100 mm fold gap at the rear (640 cm2)
+#    -> leg A, forward along the ground under P1 (~460 mm, ~640 -> 1440 cm2) -> mouth 640 x 225 with a
+#    centre divider. Matches hornresp_lowmid.txt: S 256/256/480/640/1440 cm2, L 4/40/15/41 cm.
+# 2. Net air: rear chamber ~45 L (Vrc, after the motors) + front chamber ~2.4 L plus the cone dishes (~7 L in
+#    Hornresp) + the horn legs. Outer box 157.1 L - wood 40.6 L (spkmod cad) - 2 motors ~2.7 L = ~114 L.
+#    Hole depth is 20 mm so the cut-outs stop inside the 8 mm front-chamber gap (P3 must stay whole).
+# 3. All panels span the full inner width (y 18..658) except the mouth divider (vertical, centre line,
+#    d 18-268, 18 mm thick, top edge cut to the roof slope, as built). Fold fillets are 38 mm 45 deg wedges.
+#    Left out: battens (20 x 20, inside the sealed rear chamber corners), mesh over the mouth, feet,
+#    pole socket, terminal, lid-to-baffle brace.
+# 4. Mouth: open front below the front panel, x = 496, y 18..658, z 18..243 (two 311 x 225 halves).
+#    Pistons drv_a / drv_b: 222 mm down-slope from the baffle's front edge, y = 178 / 498, front = down
+#    and slightly forward (baffle normal, 14 deg). Rear and motors in the sealed rear chamber.
+parts:
+  - {type: box, name: side_l, at: [0.0, 0.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: side_r, at: [0.0, 658.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: bottom, at: [0.0, 18.0, 0.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: lid, at: [0.0, 18.0, 450.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: rear_panel, at: [0.0, 18.0, 18.0], size: [18.0, 640.0, 432.0]}
+  - {type: box, name: front_panel, at: [478.0, 18.0, 243.0], size: [18.0, 640.0, 207.0]}
+  - {type: prism, name: p1_horn_roof, plane: xz, points: [[478.0, 243.0], [118.0, 118.0], [118.0, 136.0], [478.0, 261.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: p3_chamber_floor, plane: xz, points: [[438.0, 291.0], [18.0, 186.0], [18.0, 204.0], [438.0, 309.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: baffle, plane: xz, points: [[478.0, 327.0], [18.0, 212.0], [18.0, 230.0], [478.0, 345.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_rear_bottom, plane: xz, points: [[18.0, 17.0], [56.0, 17.0], [18.0, 56.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_under_p3, plane: xz, points: [[18.0, 187.0], [56.0, 187.0], [18.0, 148.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: mouth_divider, plane: xz, points: [[478.0, 17.0], [228.0, 17.0], [228.0, 157.2], [478.0, 244.0]], extrude: [329.0, 347.0]}
+cutouts:
+  - {type: cylinder, name: hole_a, center: [260.4, 178.0, 281.9], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 20}
+  - {type: cylinder, name: hole_b, center: [260.4, 498.0, 281.9], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 20}
+pistons:
+  - {name: drv_a, center: [260.4, 178.0, 281.9], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated
+  - {name: drv_b, center: [260.4, 498.0, 281.9], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated

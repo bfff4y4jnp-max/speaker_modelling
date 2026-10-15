@@ -1,0 +1,44 @@
+name: polebox
+units: mm
+# Pole box: 2 x FaitalPRO 8FE200 (4 ohm), each in its own sealed chamber, + B&C DE250 on a printed
+#   120 x 70 waveguide in a 43 deg wedge. outdoor_tops/pole_box_cutlist.md, 15 mm poplar ply.
+# orientation: upright as on the pole (no tilt; all downtilt is in the wedge). x = forward, back panel at
+#   x = 0, front of the baffle at x = 220, wedge top lip at x = 397; y = width (0..360); z = up from the
+#   box's bottom face (on the pole the box bottom is at 2.690 m).
+# WAVEGUIDE: simplified, not the Ath file. cad/waveguide_face.step = the horn face panel (330 x 260 x 15,
+#   both ends bevelled) fused to a solid plug that fills the wedge behind it, with the waveguide bore cut out
+#   (the air round the printed shell is sealed bay air, so this only trims the bay): elliptical sections, OS-type expansion
+#   r(u) = sqrt(12.7^2 + (u tan a)^2), a = 55.4 deg (H) / 47.9 deg (V), fitted to the cut list's throat
+#   (25.4 mm), depth (110 mm) and mouth (320 x 245 mm). Good for coverage and loading below ~3 kHz; use the
+#   printed STEP for full-range work. Built by make_specs.py with gmsh.
+# SELF-CHECK (HANDOVER 3.7)
+# 1. No horn path: two sealed chambers behind the baffle (lower z 15-250, upper z 265-495), each
+#    190 deep x 330 wide x 235 high = 14.7 L gross (cut list: ~15 L each, modelled at 10 L). The horn bay
+#    (z 510-835 plus the wedge) is closed; the waveguide opens only at the face.
+# 2. Net air: 2 x ~14 L chambers (after the driver motors) + bay ~29 L. Outer box (without the wedge)
+#    159 L; the wedge adds ~12 L but its front air is outside the box, so judge the chambers, not the total.
+# 3. All panels span the inner width (y 15..345). Braces (30 x 30 battens) and the 25 mm foam lining are
+#    left out of the panels; the lining is given as 'stuffing' in project.yml.
+# 4. Openings: the two 8" holes (186 mm) and the waveguide mouth on the 43 deg face.
+#    mid_low / mid: centres x 212.5 (baffle mid-thickness), z 135 / 385, front = +x.
+#    hf: DE250 piston 5 mm behind the waveguide throat [224.6, 180.0, 748.5], axis = horn axis [0.7314, 0.0, -0.682] (43 deg down).
+parts:
+  - {type: box, name: side_l, at: [0.0, 0.0, 0.0], size: [220.0, 15.0, 850.0]}
+  - {type: box, name: side_r, at: [0.0, 345.0, 0.0], size: [220.0, 15.0, 850.0]}
+  - {type: box, name: bottom, at: [0.0, 15.0, 0.0], size: [220.0, 330.0, 15.0]}
+  - {type: box, name: top, at: [0.0, 15.0, 835.0], size: [398.0, 330.0, 15.0]}
+  - {type: box, name: back, at: [0.0, 15.0, 15.0], size: [15.0, 330.0, 820.0]}
+  - {type: box, name: baffle, at: [205.0, 15.0, 15.0], size: [15.0, 330.0, 562.0]}
+  - {type: box, name: chamber_divider, at: [15.0, 15.0, 250.0], size: [190.0, 330.0, 15.0]}
+  - {type: box, name: shelf, at: [15.0, 15.0, 495.0], size: [190.0, 330.0, 15.0]}
+  - {type: step, name: horn_face_and_waveguide, file: ../waveguide_face.step}
+  - {type: box, name: front_lip, at: [382.3, 15.0, 765.2], size: [15.0, 330.0, 70.8]}
+  - {type: prism, name: cheek_l, plane: xz, points: [[220.0, 575.0], [397.3, 765.2], [397.3, 850.0], [220.0, 850.0]], extrude: [0.0, 15.0]}
+  - {type: prism, name: cheek_r, plane: xz, points: [[220.0, 575.0], [397.3, 765.2], [397.3, 850.0], [220.0, 850.0]], extrude: [345.0, 360.0]}
+cutouts:
+  - {type: cylinder, name: hole_low, center: [212.5, 180, 135], axis: [1, 0, 0], diameter: 186, depth: 40}
+  - {type: cylinder, name: hole_up, center: [212.5, 180, 385], axis: [1, 0, 0], diameter: 186, depth: 40}
+pistons:
+  - {name: mid_low, center: [212.5, 180, 135], axis: [1, 0, 0], sd_cm2: 191, cutout: 186, thickness: 8, motor: [120, 55]}   # motor estimated
+  - {name: mid, center: [212.5, 180, 385], axis: [1, 0, 0], sd_cm2: 191, cutout: 186, thickness: 8, motor: [120, 55]}
+  - {name: hf, center: [224.6, 180.0, 748.5], axis: [0.7314, 0.0, -0.682], sd_cm2: 5.07, cutout: 36, thickness: 4, motor: [100, 55]}   # 1" exit; motor = DE250 body (estimated)
