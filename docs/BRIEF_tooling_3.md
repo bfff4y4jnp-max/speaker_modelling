@@ -34,3 +34,11 @@ For lowmid_cone (static STEPs, before #18) the merged field files on the branch 
 `--dry-run` of the same commit did not reproduce, so the local tools could not find them by key. If #18 did not
 already make keys platform-independent (gmsh/OCC version, float formatting), please do, and add a test that the
 key of a fixed example matches a stored value.
+
+## 6. All-zero fields after a "successful" merge
+Run 38811745008 (branch claude/lowmid-variants, before #18 was merged into that branch) went green, but 10 of the
+13 low-mid variants were written with p = 0 at every point and frequency and identical x and Z (x max 1.03e-4 m/V,
+|Z| 10.96 / 5.20 / 3.67 ohm at the first frequencies) despite different geometries; the 3 variants whose cabinets
+had just changed were fine. The table shows -206 dB. Probably the same key mismatch as #18 (merge filled the
+missing groups with zeros). Please confirm #18 covers it, and make merge refuse a field whose pressure is all zero
+or bit-identical to another variant's. Rerun with main merged in: run 38815909571.
