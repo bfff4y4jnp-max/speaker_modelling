@@ -151,7 +151,8 @@ class ExteriorBEM:
         dom[act_u] = 1
         self.grid = bempp.Grid(v.T.copy(), t.T.astype(np.uint32).copy(), domain_indices=dom)
         self.P1 = bempp.function_space(self.grid, "P", 1)
-        self.D0 = bempp.function_space(self.grid, "DP", 0, segments=[1])
+        # no vibrating/opening faces outside (fully closed box): the exterior has no sources
+        self.D0 = bempp.function_space(self.grid, "DP", 0, segments=[1]) if len(act_u) else None
         # bempp may reorder DOFs; build maps from our numbering to theirs
         self._p1_perm = self._p1_map()
         self._d0_perm = self._d0_map()
@@ -218,8 +219,10 @@ class ExteriorBEM:
         return perm
 
     def _d0_map(self):
+        if self.D0 is None:
+            return np.zeros(0, np.int64)
         l2g = self.D0.local2global
-        return np.array([l2g[e][0] for e in self.act_u])
+        return np.array([l2g[e][0] for e in self.act_u], np.int64)
 
     # -------------------------------------------------------------- assembly
     def assemble(self, k):
@@ -237,7 +240,8 @@ class ExteriorBEM:
         P1, D0 = self.P1, self.D0
         if self._M11 is None:
             self._M11 = sp.coo_matrix(_bempp().as_matrix(sparse.identity(P1, P1, P1).weak_form()))
-            self._M10 = sp.coo_matrix(_bempp().as_matrix(sparse.identity(D0, P1, P1).weak_form()))
+            self._M10 = (sp.coo_matrix(_bempp().as_matrix(sparse.identity(D0, P1, P1).weak_form())) if D0 is not None
+                         else None)
         pr, pd = self._p1_perm, self._d0_perm
         rows = pr[: self.n]
         # k * (1/2 M - K + (i/k) W)  and  k * (-V - (i/k)(1/2 M + K'))
@@ -246,6 +250,8 @@ class ExteriorBEM:
         A += 1j * _with_fallback(lambda d: H.hypersingular(P1, P1, P1, k, device_interface=d))
         np.add.at(A, (self._M11.row, self._M11.col), 0.5 * k * self._M11.data)
         A = A[np.ix_(rows, pr)]
+        if D0 is None:
+            return A, np.zeros((len(rows), 0), complex)
         B = _with_fallback(lambda d: H.single_layer(D0, P1, P1, k, device_interface=d))
         B *= -k
         B -= 1j * _with_fallback(lambda d: H.adjoint_double_layer(D0, P1, P1, k, device_interface=d))
