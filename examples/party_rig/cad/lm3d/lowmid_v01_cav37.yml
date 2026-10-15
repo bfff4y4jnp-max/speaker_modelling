@@ -1,0 +1,28 @@
+name: lowmid_v01_cav37
+units: mm
+# Low-mid 3D variant 'v01_cav37' (outdoor_lowmid/lm3d_variants.py), from the straight-cut build lowmid.yml.
+# gap 8 mm, slot 40 mm, inner width 640 mm (ext 496 x 676 x 468), divider mouth, piston face 37 mm above the baffle underside.
+# cone cavity, ~7 L front chamber as in Hornresp: the new baseline
+# Frame as lowmid.yml: x forward (mouth x = 496), y across, z up, ground z = 0. Cut-out cylinders are
+#   written centred on 'center' with total length 'depth' along the axis (as in lowmid.yml).
+parts:
+  - {type: box, name: side_l, at: [0.0, 0.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: side_r, at: [0.0, 658.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: bottom, at: [0.0, 18.0, 0.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: lid, at: [0.0, 18.0, 450.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: rear_panel, at: [0.0, 18.0, 18.0], size: [18.0, 640.0, 432.0]}
+  - {type: box, name: front_panel, at: [478.0, 18.0, 243.0], size: [18.0, 640.0, 207.0]}
+  - {type: prism, name: p1_horn_roof, plane: xz, points: [[478.0, 243.0], [118.0, 118.0], [118.0, 136.0], [478.0, 261.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: p3_chamber_floor, plane: xz, points: [[438.0, 291.0], [18.0, 186.0], [18.0, 204.0], [438.0, 309.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: baffle, plane: xz, points: [[478.0, 327.0], [18.0, 212.0], [18.0, 230.0], [478.0, 345.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_rear_bottom, plane: xz, points: [[18.0, 17.0], [56.0, 17.0], [18.0, 56.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_under_p3, plane: xz, points: [[18.0, 187.0], [56.0, 187.0], [18.0, 148.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: mouth_divider, plane: xz, points: [[478.0, 17.0], [228.0, 17.0], [228.0, 157.2], [478.0, 244.0]], extrude: [329.0, 347.0]}
+  - {type: prism, name: collar_a, plane: xz, points: [[404.0, 326.0], [113.0, 253.3], [106.2, 280.4], [397.2, 353.2]], extrude: [28.0, 328.0]}
+  - {type: prism, name: collar_b, plane: xz, points: [[404.0, 326.0], [113.0, 253.3], [106.2, 280.4], [397.2, 353.2]], extrude: [348.0, 648.0]}
+cutouts:
+  - {type: cylinder, name: hole_a, center: [257.2, 178.0, 295.0], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 47.0}
+  - {type: cylinder, name: hole_b, center: [257.2, 498.0, 295.0], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 47.0}
+pistons:
+  - {name: drv_a, center: [253.7, 178.0, 309.1], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated
+  - {name: drv_b, center: [253.7, 498.0, 309.1], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated

@@ -1,0 +1,26 @@
+name: lowmid_v00_flat
+units: mm
+# Low-mid 3D variant 'v00_flat' (outdoor_lowmid/lm3d_variants.py), from the straight-cut build lowmid.yml.
+# gap 8 mm, slot 40 mm, inner width 640 mm (ext 496 x 676 x 468), divider mouth, piston face 9 mm above the baffle underside.
+# today's lowmid.yml (flat piston at baffle mid-thickness): reference
+# Frame as lowmid.yml: x forward (mouth x = 496), y across, z up, ground z = 0. Cut-out cylinders are
+#   written centred on 'center' with total length 'depth' along the axis (as in lowmid.yml).
+parts:
+  - {type: box, name: side_l, at: [0.0, 0.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: side_r, at: [0.0, 658.0, 0.0], size: [496.0, 18.0, 468.0]}
+  - {type: box, name: bottom, at: [0.0, 18.0, 0.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: lid, at: [0.0, 18.0, 450.0], size: [496.0, 640.0, 18.0]}
+  - {type: box, name: rear_panel, at: [0.0, 18.0, 18.0], size: [18.0, 640.0, 432.0]}
+  - {type: box, name: front_panel, at: [478.0, 18.0, 243.0], size: [18.0, 640.0, 207.0]}
+  - {type: prism, name: p1_horn_roof, plane: xz, points: [[478.0, 243.0], [118.0, 118.0], [118.0, 136.0], [478.0, 261.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: p3_chamber_floor, plane: xz, points: [[438.0, 291.0], [18.0, 186.0], [18.0, 204.0], [438.0, 309.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: baffle, plane: xz, points: [[478.0, 327.0], [18.0, 212.0], [18.0, 230.0], [478.0, 345.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_rear_bottom, plane: xz, points: [[18.0, 17.0], [56.0, 17.0], [18.0, 56.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: fillet_under_p3, plane: xz, points: [[18.0, 187.0], [56.0, 187.0], [18.0, 148.0]], extrude: [18.0, 658.0]}
+  - {type: prism, name: mouth_divider, plane: xz, points: [[478.0, 17.0], [228.0, 17.0], [228.0, 157.2], [478.0, 244.0]], extrude: [329.0, 347.0]}
+cutouts:
+  - {type: cylinder, name: hole_a, center: [260.4, 178.0, 281.9], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 20.0}
+  - {type: cylinder, name: hole_b, center: [260.4, 498.0, 281.9], axis: [0.2425, 0.0, -0.9701], diameter: 282, depth: 20.0}
+pistons:
+  - {name: drv_a, center: [260.4, 178.0, 281.9], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated
+  - {name: drv_b, center: [260.4, 498.0, 281.9], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}   # motor size estimated
