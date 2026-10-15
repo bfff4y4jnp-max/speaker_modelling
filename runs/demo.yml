@@ -1,0 +1,5 @@
+# Run request: pushing a change to any runs/*.yml file starts the "solve" GitHub Actions workflow.
+# Results and report are committed back to runs/<name>/ on the same branch.
+project: examples/demo/project.yml
+per_octave: 12
+max_jobs: 20

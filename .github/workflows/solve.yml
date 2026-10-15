@@ -1,0 +1,102 @@
+# Parallel FEM/BEM solves on GitHub-hosted runners.
+#
+# Start a run by pushing a new or changed run request file runs/<name>.yml
+# (see spkmod/jobs.py for the format), or from the Actions tab
+# ("Run workflow", once this file is on the default branch).
+# Each scene/frequency band runs as its own job; results (complex64 .npz),
+# the report and run_info.json are committed to runs/<name>/ on the same branch.
+name: solve
+
+on:
+  push:
+    paths: ["runs/*.yml"]
+  workflow_dispatch:
+    inputs:
+      request:
+        description: "Run request file, e.g. runs/demo.yml"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: solve-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      request: ${{ steps.req.outputs.request }}
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - id: req
+        shell: bash
+        run: |
+          r="${{ inputs.request }}"
+          if [ -z "$r" ]; then
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then before="HEAD~1"; fi
+            r=$(git diff --name-only --diff-filter=AM "$before" HEAD -- 'runs/*.yml' | head -1)
+          fi
+          test -n "$r" || { echo "no run request changed"; exit 1; }
+          echo "request=$r" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup
+      - id: plan
+        run: |
+          spkmod job plan "${{ steps.req.outputs.request }}" --summary
+          echo "parts=$(spkmod job plan '${{ steps.req.outputs.request }}')" >> "$GITHUB_OUTPUT"
+
+  solve:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        part: ${{ fromJson(needs.plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: spkmod job solve "${{ needs.plan.outputs.request }}" --part ${{ matrix.part }} --out parts/part_${{ matrix.part }}.npz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.part }}
+          path: parts/
+          retention-days: 7
+
+  merge:
+    needs: [plan, solve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with: {pattern: part-*, path: parts, merge-multiple: true}
+      - id: out
+        shell: bash
+        run: |
+          req="${{ needs.plan.outputs.request }}"
+          name=$(basename "$req" .yml)
+          out="runs/$name"
+          project=$(python -c "import yaml,sys; print(yaml.safe_load(open('$req'))['project'])")
+          preset=$(python -c "import yaml; print(yaml.safe_load(open('$req')).get('preset') or '')")
+          spkmod job merge "$req" --parts parts --out "$out"
+          spkmod report "$project" --results "$out/results" --out "$out/report" ${preset:+--preset "$preset"}
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+          cat "$out/report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: run-output
+          path: ${{ steps.out.outputs.dir }}
+      - name: commit results
+        shell: bash
+        run: |
+          git config user.name "spkmod-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f "${{ steps.out.outputs.dir }}"
+          git commit -m "Results for ${{ needs.plan.outputs.request }} (run ${{ github.run_id }})" || exit 0
+          for i in 1 2 3 4; do git pull --rebase -q && git push && break || sleep $((2**i)); done

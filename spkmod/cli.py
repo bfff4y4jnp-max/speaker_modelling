@@ -37,7 +37,29 @@ def cmd_mesh(pr, a):
 
 def _scenes(pr, a):
     names = [a.scene] if a.scene else list(pr.cfg["scenes"])
+    if getattr(a, "results", None):          # merged results from a batch run (no solving)
+        from .scene import SceneResult
+        return {n: SceneResult.load(os.path.join(a.results, f"{n}.npz")) for n in names
+                if os.path.exists(os.path.join(a.results, f"{n}.npz"))}
     return {n: pr.solve(n, a.fmin, a.fmax, a.per_octave) for n in names}
+
+
+def cmd_job(a):
+    import json
+    from . import jobs
+    req = jobs.load_request(a.request)
+    if a.action == "plan":
+        p = jobs.plan(req)
+        if a.summary:
+            for j in p:
+                print(f"part {j['part']:2d} {j['scene']:10s} {j['freqs'][0]:8.1f}-{j['freqs'][-1]:8.1f} Hz "
+                      f"{len(j['freqs']):3d} freqs  cost {j['cost']:.0f}")
+        else:
+            print(json.dumps([j["part"] for j in p]))
+    elif a.action == "solve":
+        jobs.solve_part(req, a.part, a.out)
+    elif a.action == "merge":
+        print(json.dumps(jobs.merge_run(req, a.parts, a.out), indent=1))
 
 
 def cmd_solve(pr, a):
@@ -132,7 +154,19 @@ def main(argv=None):
         if name == "report":
             p.add_argument("--out", default="report")
             p.add_argument("--preset")
+            p.add_argument("--results", help="directory of merged <scene>.npz (skip solving)")
+    pj = sub.add_parser("job", help="batch runs: plan / solve one part / merge (GitHub Actions, Slurm)")
+    pj.add_argument("action", choices=["plan", "solve", "merge"])
+    pj.add_argument("request", help="run request YAML (runs/<name>.yml)")
+    pj.add_argument("--part", type=int)
+    pj.add_argument("--parts", help="directory of part .npz files (merge)")
+    pj.add_argument("--out")
+    pj.add_argument("--summary", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "job":
+        _setup(False)
+        cmd_job(a)
+        return
     if a.cmd == "cad":
         from .cadgen import build
         for spec in a.spec:

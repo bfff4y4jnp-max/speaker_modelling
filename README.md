@@ -37,6 +37,21 @@ Handover for the design project (creating cabinet specs without CAD software): `
 The party-rig template is `examples/party_rig/project.yml`. Fill in its TODOs
 (STEP files, driver data, layout, CamillaDSP config).
 
+## Free parallel runs on GitHub Actions
+
+Write a run request and push it; every scene and frequency band then solves on its own runner (about 20 in parallel, free for public repos):
+
+```yaml
+# runs/stack_v1.yml
+project: examples/party_rig/project.yml
+scenes: [stack]          # optional
+per_octave: 24           # optional
+max_jobs: 20
+```
+
+The `solve` workflow commits the merged results, `run_info.json` and the report to `runs/stack_v1/`. The summary table also shows on the run page.
+Each job is limited to 4 cores, 16 GB and 6 h. The same `spkmod job plan/solve/merge` commands work on Slurm (Iridis) job arrays.
+
 Python API:
 
 ```python
