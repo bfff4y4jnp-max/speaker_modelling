@@ -181,6 +181,9 @@ variants:
     base: m2m
     grid: {offline.delay_ms.sub_rear: [-0.5, 0, 0.5]}       # expands to rear_delay[sub_rear=-0.5] ...
     offline: {polarity: {sub_rear: -1}}                     # also gain_db, mute: [ch], preset: party, filters: {ch: [CamillaDSP filter dicts]}
+  - name: packed                                            # crowd on the floor (offline: no new solve)
+    base: m2m
+    offline: {crowd: {box: [1.0, 6.0, -2.5, 2.5], height: 1.7, sigma: 5000}}
   - name: finer
     project: {solver: {h_max: 0.08}}                        # any deep merge into project.yml
   - name: spread                                            # Monte Carlo over offline inputs: ONE acoustic solve
@@ -231,7 +234,13 @@ Comparisons:
 * **Phasors and levels.** All phasors are rms. Levels are dB SPL re 20 µPa. Excursion peaks are √2·|x|.
 * **Ground.** On-ground scenes use a rigid ground in the BEM (correct for grass below about 300 Hz). Elevated scenes use image points with `ground_reflection` or `ground_sigma`.
 * **Near-surface points.** Points closer than about one element size (h) to a box surface are less accurate. Keep zones at least h away.
-* **Rigid walls, small signal.** No panel vibration, no Bl(x)/Cms(x), no thermal compression, no crowd absorption.
+* **Rigid walls, small signal.** No panel vibration, no Bl(x)/Cms(x), no thermal compression.
+* **The crowd (`offline: crowd`).**
+  * **Model:** the crowd is an equivalent porous layer: a Miki fluid with flow resistivity `sigma`, filling `box` up to `height`. Each scene's direct path and ground-image path are attenuated along the stretch of the straight ray from the scene's acoustic centre that lies inside that volume. So a packed floor mainly removes the ground reflection and the high frequencies at head height.
+  * **Simplifications:** refraction and scattering at the crowd's edges are ignored.
+  * **Ground scenes:** for on-ground scenes the ground reflection is inside the solve, so the direct-path factor is applied to their total.
+  * **Calibration:** sigma is a fit parameter; start around 2–20 kPa·s/m² and calibrate against a measurement if one exists.
+  * **Fields:** it needs fields written by this version. Older ones raise an error asking for a re-solve.
 * **Frequency range of the 3D model.** The full-box BEM is good up to where its mesh fits in memory: 16 GB covers about 9.6k BEM nodes, or about 17k when only a few frequencies are asked per band. For the pole box that is roughly 4–6 kHz.
 * **The high-frequency waveguide model (`exterior: baffle`).** For the band above that limit, give the waveguide its own cabinet:
   * The solids are the bore and its face. The only opening is the mouth, which must lie in one plane: use a STEP in a frame where the face is axis-aligned, or set `envelope:` to a box aligned with the face.
