@@ -39,17 +39,62 @@ _DEVICE = None
 
 
 def device():
-    """'opencl' when a CPU OpenCL driver is present (2-5x faster, pip install pyopencl
+    """'opencl' when a CPU OpenCL driver is present and works on this CPU (2-5x faster; pip install pyopencl
     pocl-binary-distribution), else 'numba'. Override with SPKMOD_BEM_DEVICE."""
     global _DEVICE
     if _DEVICE is None:
         _DEVICE = os.environ.get("SPKMOD_BEM_DEVICE")
         if not _DEVICE:
             try:
-                _DEVICE = "opencl" if _bempp().CPU_OPENCL_DRIVER_FOUND else "numba"
+                _DEVICE = "opencl" if _bempp().CPU_OPENCL_DRIVER_FOUND and _opencl_works() else "numba"
             except Exception:
                 _DEVICE = "numba"
     return _DEVICE
+
+
+_PROBE = """
+import bempp_cl.api as b
+from bempp_cl.api.operators.boundary import helmholtz as H
+g = b.shapes.regular_sphere(1)
+P = b.function_space(g, "P", 1)
+for op in (H.double_layer, H.hypersingular):
+    b.as_matrix(op(P, P, P, 1.0, device_interface="opencl").weak_form())
+"""
+
+
+def _opencl_works():
+    """Build the OpenCL kernels once in a child process: pocl's LLVM can abort the whole process on CPUs it
+    does not know (e.g. GitHub's AMD EPYC Zen 5 runners). The verdict is cached per CPU model."""
+    import hashlib
+    import platform
+    import subprocess
+    import sys
+    cpu = platform.processor() or platform.machine()
+    try:
+        with open("/proc/cpuinfo") as fh:
+            cpu = next((l.split(":", 1)[1].strip() for l in fh if l.startswith("model name")), cpu)
+    except OSError:
+        pass
+    cache = os.path.join(os.path.expanduser("~"), ".cache", "spkmod",
+                         "opencl_" + hashlib.sha1(cpu.encode()).hexdigest()[:12])
+    if os.path.exists(cache):
+        with open(cache) as fh:
+            return fh.read().strip() == "ok"
+    try:
+        r = subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, timeout=300)
+        ok = r.returncode == 0
+    except Exception:
+        ok = False
+    if not ok:
+        import logging
+        logging.getLogger("spkmod").warning("OpenCL BEM kernels do not build on this CPU (%s); using numba", cpu)
+    try:
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        with open(cache, "w") as fh:
+            fh.write("ok" if ok else "fail")
+    except OSError:
+        pass
+    return ok
 
 
 def _with_fallback(make):

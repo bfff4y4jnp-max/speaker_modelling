@@ -82,3 +82,13 @@ def test_opencl_failure_falls_back_to_numba(monkeypatch):
 
     monkeypatch.setattr(bem, "_dense", lambda x: x)
     assert bem._with_fallback(make) == "numba" and calls == ["opencl", "numba"] and bem.device() == "numba"
+
+
+def test_opencl_probe_crash_means_numba(monkeypatch, tmp_path):
+    """A child process that aborts (as pocl's LLVM does on unknown CPUs) selects numba, cached."""
+    import spkmod.bem as bem
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(bem, "_PROBE", "import os; os.abort()")
+    assert bem._opencl_works() is False
+    monkeypatch.setattr(bem, "_PROBE", "pass")
+    assert bem._opencl_works() is False          # cached verdict for this CPU

@@ -130,6 +130,10 @@ Rough cost on 4 cores:
 | Sealed box: LF far field | Monopole | < 1.5% |
 | Vented box tuning (FEM–BEM aperture coupling) | Helmholtz with end corrections | Within the end-correction range (30.6 Hz vs 30.0–30.7 Hz) |
 | LR4 sum, BW −3 dB, CamillaDSP mixer and filter chain | Theory | Exact |
+| Reused interiors vs full coupled solve (touching and rotated boxes on ground) | Full solve | ≤ 0.05 dB driven SPL, ≤ 2.3 % \|Z\| |
+| Sharded sweep (2 solves × 2 bands) vs single run | Single run | < 0.001 dB |
+| Floor metrics: flat field, notch = hole, level offset ≠ tonal; floor-model CSV round trip | Constructed | Exact |
+| Mesher: DE250-at-throat failure auto-repaired / named; gaps reported; thin shell meshes | Reproduced failures | Pass |
 | Ground Q limits, floor-stat sanity | Theory | Pass |
 
 What still limits real-world accuracy, roughly in order:
