@@ -91,6 +91,22 @@ class Project:
             return np.loadtxt(self._p(L["file"]), delimiter=",")
         return np.asarray(L["points"], float)
 
+    def observation_points(self):
+        """(points, zones): the listeners as zone 'floor' followed by the project's `zones:`."""
+        from .metrics import zone_points
+        pts, zones, n = [], {}, 0
+        L = self.listeners()
+        if L is not None:
+            pts.append(L)
+            zones["floor"] = np.arange(len(L))
+            n = len(L)
+        for z, zs in (self.cfg.get("zones") or {}).items():
+            P = zone_points(zs, self.dir)
+            pts.append(P)
+            zones[z] = np.arange(n, n + len(P))
+            n += len(P)
+        return (np.vstack(pts) if pts else None), zones
+
     def directions(self, step_deg=5):
         """Horizontal (xy) and vertical (xz) polar directions about +x (front)."""
         a = np.radians(np.arange(-180, 180, step_deg))
@@ -116,7 +132,7 @@ class Project:
     def solve(self, scene, fmin=None, fmax=None, per_octave=None):
         sc = self.cfg["scenes"][scene]
         ground = sc.get("ground", True)
-        return solve_scene(self.cabinets(scene), self.freqs(scene, fmin, fmax, per_octave), points=self.listeners(),
+        return solve_scene(self.cabinets(scene), self.freqs(scene, fmin, fmax, per_octave), points=self.observation_points()[0],
                            directions=self.directions() if sc.get("polars", True) else None, ground=ground,
                            image_points=not ground, air=self.air, settings=self.settings,
                            center=sc.get("acoustic_center"))
@@ -131,7 +147,9 @@ class Project:
         """SystemModel from {scene: SceneResult} (results must share frequencies)."""
         m = SystemModel(air=self.air)
         for name, res in results.items():
-            m.add_scene(name, res, self.wiring(name), self.cfg["scenes"][name].get("ground_sigma", np.inf))
+            sc = self.cfg["scenes"][name]
+            g = sc.get("ground_reflection", sc.get("ground_sigma", np.inf))    # |R|(f) table or flow resistivity
+            m.add_scene(name, res, self.wiring(name), g)
         return m
 
     def channel_tf(self, freqs, preset=None):

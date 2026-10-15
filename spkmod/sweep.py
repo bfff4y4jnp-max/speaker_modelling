@@ -17,6 +17,7 @@ sweep.yml (paths relative to the sweep file):
     smoothing: 6                       # 1/n octave for spreads and holes
     dsp: project                       # project (CamillaDSP of the project) | flat (amp volts on every channel)
     reference: base                    # variant that d_median_db is taken against (default: the first)
+    reference_csv: ../floor_model_deep30_x80.csv   # optional: floor zone vs the floor model, per band
     parallel: 1                        # solves at once; the memory budget and cores are split between them
     variants:
       - name: base
@@ -37,7 +38,8 @@ sweep.yml (paths relative to the sweep file):
       - name: finer
         project: {solver: {h_max: 0.08}}   # any deep merge into the project config
 
-Outputs in `out`: table.csv, table.txt, fields/<key>.npz (per-channel pressure per volt, excursion per
+Outputs in `out`: table.csv, table.txt, perfreq.csv (zone median and spread per frequency),
+reference.csv (when reference_csv is given), fields/<key>.npz (per-channel pressure per volt, excursion per
 volt, impedance) and variants/<variant>.npz (per-frequency zone medians, total pressure).
 Sweeps default to solver.interior: reuse (each cabinet's interior solved once; set `full` in the
 project or a variant's `project:` to force the coupled solve). Solves are cached in the project's cache_dir by content, and each band group is saved as it finishes,
@@ -198,26 +200,21 @@ def apply_variant(cfg, v, scenes, sweep_dir, out_dir, proj_dir):
 
 # --------------------------------------------------------------------------- solving
 def _points(pr, spec, sweep_dir):
-    """Observation points and zone index map: 'floor' = listeners, plus project and sweep zones."""
+    """Observation points and zone index map: 'floor' = listeners, then project zones, then sweep zones."""
     from .metrics import zone_points
-    pts, zones = [], {}
-    L = pr.listeners() if spec.get("listeners") is None else None
+    from .project import Project
     if spec.get("listeners") is not None:
-        pr_l = copy.deepcopy(pr.cfg)
-        pr_l["listeners"] = spec["listeners"]
-        from .project import Project
-        L = Project(cfg=pr_l, base_dir=sweep_dir).listeners()
-    n = 0
-    if L is not None:
-        pts.append(L)
-        zones["floor"] = np.arange(len(L))
-        n = len(L)
-    for src, base in ((pr.cfg.get("zones") or {}, pr.dir), (spec.get("zones") or {}, sweep_dir)):
-        for z, zs in src.items():
-            P = zone_points(zs, base)
-            pts.append(P)
-            zones[z] = np.arange(n, n + len(P))
-            n += len(P)
+        cfg = copy.deepcopy(pr.cfg)
+        cfg["listeners"] = spec["listeners"]
+        pr = Project(cfg=cfg, base_dir=sweep_dir)
+    pts, zones = pr.observation_points()
+    pts = [] if pts is None else [pts]
+    n = sum(len(p) for p in pts)
+    for z, zs in (spec.get("zones") or {}).items():
+        P = zone_points(zs, sweep_dir)
+        pts.append(P)
+        zones[z] = np.arange(n, n + len(P))
+        n += len(P)
     if not pts:
         raise ValueError("no listener points: give listeners or zones")
     return np.vstack(pts), zones
@@ -236,7 +233,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
             c = cfg["cabinets"][it["cabinet"]]
             cabs[it["cabinet"]] = {k: v for k, v in c.items() if k != "step"}
             cabs[it["cabinet"]]["step_hash"] = _file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"]) else c.get("step")
-    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma",)} for s in scenes}
+    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma", "ground_reflection")} for s in scenes}
     return {"cabs": cabs, "scenes": sc, "solver": {k: v for k, v in (cfg.get("solver") or {}).items()
                                                  if k not in ("memory_gb", "cache_dir")},
             "air": cfg.get("air"), "freqs": np.round(freqs, 4).tolist(), "points": np.round(points, 5).tolist()}
@@ -244,7 +241,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
 
 def _field_signature(cfg, scenes, acoustic):
     return {"a": acoustic, "wiring": {s: (cfg.get("wiring") or {}).get(s) for s in scenes},
-            "drivers": cfg.get("drivers"), "ground": {s: cfg["scenes"][s].get("ground_sigma") for s in scenes}}
+            "drivers": cfg.get("drivers"), "ground": {s: [cfg["scenes"][s].get("ground_sigma"), cfg["scenes"][s].get("ground_reflection")] for s in scenes}}
 
 
 def _solve_group(job):
@@ -336,7 +333,7 @@ def variant_response(pr, F, mode, off):
 
 # --------------------------------------------------------------------------- driver
 def run_sweep(path, parallel=None, only=None, dry_run=False):
-    from .metrics import format_table, parse_bands, zone_table
+    from .metrics import compare_to_reference, format_table, parse_bands, per_frequency, zone_table
     from .project import Project
     sweep_dir = os.path.dirname(os.path.abspath(path))
     with open(path) as fh:
@@ -439,7 +436,9 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
     # ---------------------------------------------------------------- tables
     mode = spec.get("dsp", "project")
     smoothing = spec.get("smoothing", 6)
-    rows, medians = [], {}
+    rows, medians, perfreq, refrows = [], {}, [], []
+    ref_csv = spec.get("reference_csv")
+    ref_csv = os.path.join(sweep_dir, ref_csv) if ref_csv and not os.path.isabs(ref_csv) else ref_csv
     ref = spec.get("reference") or plan[0][0]
     bands = None
     for vname, v, cfg, fpath in plan:
@@ -459,9 +458,14 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
         rows += vr
         med = {z: 10 * np.log10(np.median(np.abs(p[:, idx]) ** 2, axis=1) / 4e-10) for z, idx in zones.items()}
         medians[vname] = med
-        np.savez_compressed(os.path.join(out_dir, "variants", f"{_safe(vname)}.npz"), freqs=f,
-                            zones=np.array(list(zones)), median_db=np.array([med[z] for z in zones]),
-                            p=p.astype(np.complex64))
+        perfreq += [{"variant": vname, **r} for r in per_frequency(f, p, zones, smoothing)]
+        if ref_csv:
+            cmp_ = compare_to_reference(f, p[:, zones["floor"]], points[zones["floor"]], ref_csv, bands)
+            refrows += [{"variant": vname, "offset_db": cmp_["offset_db"], **r} for r in cmp_["rows"]]
+        np.savez_compressed(os.path.join(out_dir, "variants", f"{_safe(vname)}.npz"), freqs=f, points=points,
+                            zones=np.array(list(zones)), zone_index=np.concatenate(list(zones.values())),
+                            zone_len=np.array([len(i) for i in zones.values()]),
+                            median_db=np.array([med[z] for z in zones]), p=p.astype(np.complex64))
     refrow = {(r["zone"], r["band"]): r["median_db"] for r in rows if r["variant"] == ref}
     for r in rows:
         if (r["zone"], r["band"]) in refrow:
@@ -473,13 +477,47 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
         w.writeheader()
         for r in rows:
             w.writerow({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items()})
+    _write_csv(os.path.join(out_dir, "perfreq.csv"), perfreq, ["variant", "zone", "freq", "median_db", "p10", "p90"])
+    extra = ""
+    if refrows:
+        rk = ["variant", "band", "offset_db", "d_median_db", "spot_rms_db", "model_p10", "ref_p10", "model_p90",
+              "ref_p90", "model_holes6_pct", "ref_holes6_pct", "model_holes3_pct", "ref_holes3_pct"]
+        _write_csv(os.path.join(out_dir, "reference.csv"), refrows, rk)
+        extra = "\n\n" + format_reference(refrows, os.path.basename(ref_csv))
     txt = (f"sweep {name}  (dsp: {mode}, reference: {ref}, levels dB SPL at 0 dBFS program, "
-           f"spreads/holes at 1/{smoothing} oct)\n" + format_table(rows))
+           f"spreads/holes at 1/{smoothing} oct)\n" + format_table(rows) + extra)
     with open(os.path.join(out_dir, "table.txt"), "w") as fh:
         fh.write(txt + "\n")
     print(txt)
     print(f"\nwritten: {os.path.join(out_dir, 'table.csv')}, table.txt, fields/, variants/")
     return rows
+
+
+def _write_csv(path, rows, keys):
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, keys, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items()})
+
+
+def format_reference(rows, label):
+    lines = [f"== floor vs reference {label} (aligned by the median offset; sixth-octave bands)",
+             f"{'variant':28s} {'band':>9s} {'dMed':>6s} {'spot rms':>8s} {'model p10..p90':>15s} "
+             f"{'ref p10..p90':>13s} {'>6dB m/r':>11s}"]
+    for r in rows:
+        lines.append(f"{r['variant']:28.28s} {r['band']:>9s} {r['d_median_db']:+6.1f} {r['spot_rms_db']:8.2f} "
+                     f"{r['model_p10']:+6.1f}..{r['model_p90']:+5.1f}  {r['ref_p10']:+6.1f}..{r['ref_p90']:+5.1f} "
+                     f"{r['model_holes6_pct']:5.1f}/{r['ref_holes6_pct']:4.1f}%")
+    return "\n".join(lines)
+
+
+def load_variant(path):
+    """Saved variant: freqs, points, total pressure p (nf, npts) and {zone: indices}."""
+    z = np.load(path, allow_pickle=False)
+    idx = np.split(z["zone_index"], np.cumsum(z["zone_len"])[:-1])
+    return {"freqs": z["freqs"], "points": z["points"], "p": z["p"].astype(complex),
+            "zones": dict(zip(map(str, z["zones"]), idx))}
 
 
 def _safe(s):

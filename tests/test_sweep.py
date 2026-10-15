@@ -71,6 +71,13 @@ def test_sweep_end_to_end(tmp_path):
     assert get("moved", "floor")["d_median_db"] != 0
     out = d / "sweeps" / "sweep"
     assert (out / "table.csv").exists() and len(list((out / "fields").glob("*.npz"))) == 3
+    assert (out / "perfreq.csv").exists()
+    from spkmod.sweep import load_variant
+    v = load_variant(str(out / "variants" / "moved.npz"))
+    assert list(v["zones"]) == ["floor", "behind"] and v["p"].shape == (2, 4)
+    from spkmod.cli import main
+    main(["compare", str(out), "--a", "base", "--b", "moved", "--out", str(out / "diff.csv")])
+    assert (out / "diff.csv").read_text().startswith("zone,band,d_median_db")
     # rerun: everything cached, no new solves
     rows2 = run_sweep(str(d / "sweep.yml"))
     assert rows2 == rows

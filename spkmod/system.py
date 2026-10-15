@@ -20,7 +20,8 @@ class SceneEntry:
     name: str
     result: object
     wiring: Wiring
-    ground_sigma: float = np.inf      # impedance ground for scenes solved without a BEM ground (needs T_img)
+    ground_sigma: object = np.inf     # scenes solved without a BEM ground (needs T_img): flow resistivity,
+                                      # inf (rigid) or an |R|(f) table [[f, R], ...]
 
 
 @dataclass
@@ -77,6 +78,13 @@ class SystemModel:
         return out
 
     def _ground_factor(self, r, sigma, f):
+        """Image-source factor. sigma: flow resistivity (Miki impedance ground, spherical-wave Q),
+        inf (rigid), or a table [[f, |R|], ...] (real, angle independent; log-f interpolation,
+        held constant outside), as the floor model's grass curve."""
+        if not np.isscalar(sigma):
+            tab = np.asarray(sigma, float)
+            R = np.interp(np.log(f), np.log(tab[:, 0]), tab[:, 1])
+            return np.broadcast_to(R[:, None], (len(f), len(r.points))).astype(complex)
         s = r.center
         img = s * [1, 1, -1]
         d = r.points - img
@@ -150,32 +158,20 @@ DEFAULT_BANDS = {"40-90": (40, 90), "90-180": (90, 180), "180-450": (180, 450), 
                  "1k-2.5k": (1000, 2500), "2.5k-6k": (2500, 6000), "6k-12k": (6000, 12000)}
 
 
-def floor_stats(f, p, bands=DEFAULT_BANDS, norm_range=(50, 8000), dip_db=6.0, n=6):
-    """Tonal-consistency statistics over listener points.
+def floor_stats(f, p, bands=DEFAULT_BANDS, norm_range=None, dip_db=6.0, n=6):
+    """Tonal-consistency statistics over listener points (wrapper over spkmod.metrics).
 
-    Each spot is normalised to its own overall level over `norm_range`.
-    spread: p10/p90 of the spot deviation from the floor median (1/n octave).
-    dips: share of spots where some analysis frequency inside the band is
-    more than `dip_db` below that spot's own band average.
+    Returns {'centres', 'median', 'rows': {band: {p10, p90, dips_pct, rms, holes3_pct, median_db}}};
+    see spkmod/metrics.py for the definitions. norm_range/dip_db are kept for compatibility
+    (normalisation is over the analysed bands, holes are reported at 6 and 3 dB).
     """
+    from .metrics import band_metrics
     P2 = np.abs(p) ** 2
-    m = (f >= norm_range[0]) & (f <= norm_range[1])
-    spot = 10 * np.log10(P2[m].mean(0))
     fc, B = frac_octave(f, P2, n)
-    LdB = 10 * np.log10(B) - spot[None]
-    med = np.median(LdB, axis=1)
-    dev = LdB - med[:, None]
-    out = {"centres": fc, "median": med + np.median(spot), "rows": {}}
-    for name, (lo, hi) in bands.items():
-        sel = (fc >= lo) & (fc <= hi)
-        fm = (f >= lo) & (f <= hi)
-        if not sel.any() or not fm.any():
-            continue
-        d = dev[sel].ravel()
-        band_avg = 10 * np.log10(P2[fm].mean(0))
-        dips = (10 * np.log10(P2[fm]) < band_avg[None] - dip_db).any(0)
-        out["rows"][name] = {"p10": float(np.percentile(d, 10)), "p90": float(np.percentile(d, 90)),
-                             "dips_pct": float(100 * dips.mean())}
+    LdB = 10 * np.log10(B)
+    out = {"centres": fc, "median": np.median(LdB, axis=1) - 10 * np.log10(P_REF ** 2), "rows": {}}
+    for name, m in band_metrics(f, p, dict(bands), smoothing=n).items():
+        out["rows"][name] = {**m, "dips_pct": m["holes6_pct"] if dip_db == 6.0 else m["holes3_pct"]}
     return out
 
 
