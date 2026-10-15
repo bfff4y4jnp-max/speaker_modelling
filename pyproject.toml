@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spkmod"
+version = "0.1.0"
+description = "3D FEM/BEM loudspeaker and sound-system modelling from CAD"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy", "scipy", "pyyaml", "matplotlib", "meshio",
+  "gmsh>=4.11", "scikit-fem>=9", "bempp-cl>=0.4", "numba",
+]
+
+[project.optional-dependencies]
+fast = ["pyopencl", "pocl-binary-distribution"]   # 2-5x faster BEM assembly on CPU
+test = ["pytest"]
+
+[project.scripts]
+spkmod = "spkmod.cli:main"
+
+[tool.setuptools]
+packages = ["spkmod"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

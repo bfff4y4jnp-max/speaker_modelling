@@ -1,0 +1,51 @@
+# spkmod demo project. Lengths in metres unless the key has a unit suffix.
+# Driver data below are ILLUSTRATIVE generic values, not a real product.
+air: {temperature: 20, humidity: 60}
+solver:
+  elements_per_wavelength: 6
+  h_max: 0.10            # geometry resolution cap (m)
+  memory_gb: null        # default: 60 % of available RAM
+  cache_dir: .spkmod_cache
+frequencies: {min: 20, max: 600, per_octave: 12}
+
+drivers:
+  woofer12: {Fs: 35, Qes: 0.38, Qms: 5.0, Vas_l: 120, Re: 5.6, Le_mH: 1.2, Sd_cm2: 522, Xmax_mm: 7}
+  mid65:    {Fs: 60, Qes: 0.45, Qms: 4.0, Vas_l: 14,  Re: 5.8, Le_mH: 0.4, Sd_cm2: 132, Xmax_mm: 4}
+
+cabinets:
+  sub:
+    step: cad/sub.step      # solids only, mm; local origin = CAD origin
+    pistons:
+      - {name: woofer, center: [0.491, 0.225, 0.330], axis: [1, 0, 0], sd_cm2: 522, cutout: 0.28, thickness: 0.008}
+  top:
+    step: cad/top.step
+    pistons:
+      - {name: mid, center: [0.2425, 0.125, 0.220], axis: [1, 0, 0], sd_cm2: 132, cutout: 0.15, thickness: 0.006}
+
+scenes:
+  bass:                     # solved jointly, standing on rigid ground (BEM image)
+    ground: true
+    max_freq: 300
+    items:
+      - {cabinet: sub, name: sub1, position: [0, -0.25, 0]}
+  tops:                     # elevated: free-field BEM, grass applied at system level
+    ground: false
+    ground_sigma: 200000    # Pa s/m^2, short grass
+    min_freq: 100
+    items:
+      - {cabinet: top, name: top1, position: [0, -0.125, 1.6]}
+
+wiring:
+  bass:
+    sub1.woofer: {driver: woofer12, channel: sub}
+  tops:
+    top1.mid: {driver: mid65, channel: top}
+
+dsp:
+  camilladsp: camilladsp.yml
+  outputs: {sub: 0, top: 1}
+  input: [0.5, 0.5]          # mono program (L = R)
+  volts_at_0dbfs: 20
+
+listeners:
+  grid: {x: [2, 6], y: [-2, 2], spacing: 1.0, heights: [1.6]}
