@@ -1,0 +1,16 @@
+name: setup spkmod
+description: System libraries, Python and spkmod with the OpenCL CPU backend
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends libglu1-mesa libxcursor1 libxinerama1 libxft2 libxrender1
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: pyproject.toml
+    - shell: bash
+      run: pip install -e ".[fast,test]"

@@ -81,3 +81,28 @@ def test_sweep_end_to_end(tmp_path):
     # rerun: everything cached, no new solves
     rows2 = run_sweep(str(d / "sweep.yml"))
     assert rows2 == rows
+
+
+def test_sharded_sweep_matches_single_run(tmp_path):
+    """Shards (solve group x whole frequency bands) solved separately and merged give the same table."""
+    from spkmod import sweep as sw
+    from spkmod.system import log_freqs
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": log_freqs(35, 150, 4).tolist()},
+            "listeners": {"points": [[3, 0, 1.6], [4, 1, 1.6], [4, -1, 1.6]]}, "bands": {"35-150": [35, 150]},
+            "variants": [{"name": "base"}, {"name": "moved", "move": {"sub1": {"position": [0.5, -0.25, 0]}}},
+                         {"name": "pol", "base": "base", "offline": {"polarity": {"sub": -1}}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    single = sw.run_sweep(str(d / "sweep.yml"), out=str(d / "single"))
+    ctx = sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True)
+    sh = sw.shards(ctx)
+    assert len(sh) == 4 and {s["group"] for s in sh} == set(ctx["groups"])
+    for s in sh:                                    # each would run on its own runner
+        sw.solve_shard(sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True), s["shard"])
+    assert len(sw.merge_shards(ctx)) == 2
+    sharded = sw.tables(sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True))
+    assert [r["variant"] for r in sharded] == [r["variant"] for r in single]
+    for a, b in zip(single, sharded):
+        assert abs(a["median_db"] - b["median_db"]) < 1e-3 and abs(a["p90"] - b["p90"]) < 1e-3
+    assert sw.shards(sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True)) == []   # nothing left to solve
