@@ -91,6 +91,13 @@ scenes:                          # boxes that interact acoustically are solved t
     # ground_sigma: 200000       # ... or Miki impedance ground (flow resistivity); omit both for rigid
     polars: true                 # far-field balloons (horizontal + vertical, 5 degree steps)
     items: [...]
+  pole_hf:                       # high-frequency model of the waveguide alone (see section 7)
+    exterior: baffle             # mouth radiates into an infinite baffle in its own plane: no box BEM
+    ground: false
+    ground_reflection: [[500, 1.0], [4000, 0.5]]
+    min_freq: 3150               # first frequency above the full-box scene's max_freq: no overlap
+    max_freq: 16000
+    items: [{cabinet: waveguide, name: pole_wg, position: [...], rotation: [...]}]
 
 wiring:                          # body = <item name>.<piston name>
   stack:
@@ -208,7 +215,13 @@ Comparisons:
 * **Ground.** On-ground scenes use a rigid ground in the BEM (correct for grass below about 300 Hz). Elevated scenes use image points with `ground_reflection` or `ground_sigma`.
 * **Near-surface points.** Points closer than about one element size (h) to a box surface are less accurate. Keep zones at least h away.
 * **Rigid walls, small signal.** No panel vibration, no Bl(x)/Cms(x), no thermal compression, no crowd absorption.
-* **Frequency range of the 3D model.** It is good up to where its mesh fits in memory: 16 GB covers about 9.6k BEM nodes, or about 17k when only a few frequencies are asked per band. For the pole box that is roughly 4–6 kHz. Above that, use the baffled-waveguide high-frequency model (see `DESIGN.md`, roadmap).
+* **Frequency range of the 3D model.** The full-box BEM is good up to where its mesh fits in memory: 16 GB covers about 9.6k BEM nodes, or about 17k when only a few frequencies are asked per band. For the pole box that is roughly 4–6 kHz.
+* **The high-frequency waveguide model (`exterior: baffle`).** For the band above that limit, give the waveguide its own cabinet:
+  * The solids are the bore and its face. The only opening is the mouth, which must lie in one plane: use a STEP in a frame where the face is axis-aligned, or set `envelope:` to a box aligned with the face.
+  * Wire the compression driver's piston to the same channel as in the full scene.
+  * Split the frequency range so the scenes don't overlap. The full scene stops at `max_freq` (e.g. 3000); the baffled scene starts at the next analysis frequency.
+  * It is valid when the face around the mouth spans several wavelengths: for the 330 × 260 mm face, from about 2–3 kHz.
+  * Validated against the exact baffled-piston impedance (within 2 %, ka 0.5–3) and directivity (`tests/test_baffled.py`).
 * **Shards and band starts.** In sharded runs, scenes whose `min_freq` lies above the sweep's first frequency get band boundaries from the shard. This still meets the λ/6 meshing rule but is not bit-identical to a single run.
 
 ## 8. Local install and commands

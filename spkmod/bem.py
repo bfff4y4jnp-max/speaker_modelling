@@ -53,12 +53,16 @@ def device():
 
 
 _PROBE = """
-import bempp_cl.api as b
+import numpy as np, bempp_cl.api as b
 from bempp_cl.api.operators.boundary import helmholtz as H
-g = b.shapes.regular_sphere(1)
-P = b.function_space(g, "P", 1)
-for op in (H.double_layer, H.hypersingular):
-    b.as_matrix(op(P, P, P, 1.0, device_interface="opencl").weak_form())
+g = b.shapes.regular_sphere(3)      # large enough for the vectorised regular-element kernels
+dom = np.zeros(g.number_of_elements, np.uint32); dom[::2] = 1
+g = b.Grid(g.vertices, g.elements, domain_indices=dom)
+P = b.function_space(g, "P", 1); D = b.function_space(g, "DP", 0, segments=[1]); Dfull = b.function_space(g, "DP", 0)
+for op in (H.double_layer(P, P, P, 1.3, device_interface="opencl"), H.hypersingular(P, P, P, 1.3, device_interface="opencl"),
+           H.single_layer(D, P, P, 1.3, device_interface="opencl"), H.adjoint_double_layer(D, P, P, 1.3, device_interface="opencl"),
+           H.single_layer(Dfull, Dfull, Dfull, 1.3, device_interface="opencl")):
+    b.as_matrix(op.weak_form())
 """
 
 
@@ -76,7 +80,7 @@ def _opencl_works():
     except OSError:
         pass
     cache = os.path.join(os.path.expanduser("~"), ".cache", "spkmod",
-                         "opencl_" + hashlib.sha1(cpu.encode()).hexdigest()[:12])
+                         "opencl2_" + hashlib.sha1(cpu.encode()).hexdigest()[:12])
     if os.path.exists(cache):
         with open(cache) as fh:
             return fh.read().strip() == "ok"

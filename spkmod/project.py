@@ -132,10 +132,17 @@ class Project:
     def solve(self, scene, fmin=None, fmax=None, per_octave=None):
         sc = self.cfg["scenes"][scene]
         ground = sc.get("ground", True)
+        settings = self.scene_settings(scene)
         return solve_scene(self.cabinets(scene), self.freqs(scene, fmin, fmax, per_octave), points=self.observation_points()[0],
                            directions=self.directions() if sc.get("polars", True) else None, ground=ground,
-                           image_points=not ground, air=self.air, settings=self.settings,
+                           image_points=not ground, air=self.air, settings=settings,
                            center=sc.get("acoustic_center"))
+
+    def scene_settings(self, scene):
+        """Solver settings with the scene's own overrides (scene key `exterior: baffle`)."""
+        import dataclasses
+        sc = self.cfg["scenes"][scene]
+        return dataclasses.replace(self.settings, exterior=sc.get("exterior", self.settings.exterior))
 
     def wiring(self, scene):
         w = Wiring()

@@ -134,6 +134,7 @@ Rough cost on 4 cores:
 | Sharded sweep (2 solves × 2 bands) vs single run | Single run | < 0.001 dB |
 | Floor metrics: flat field, notch = hole, level offset ≠ tonal; floor-model CSV round trip | Constructed | Exact |
 | Mesher: DE250-at-throat failure auto-repaired / named; gaps reported; thin shell meshes | Reproduced failures | Pass |
+| Baffled-mouth exterior (`exterior: baffle`): piston in an infinite baffle | Exact (Struve/Bessel) | ≤ 2 % impedance ka 0.5–3, directivity ≤ 0.02 |
 | Ground Q limits, floor-stat sanity | Theory | Pass |
 
 What still limits real-world accuracy, roughly in order:

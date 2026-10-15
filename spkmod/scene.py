@@ -46,6 +46,8 @@ class SolverSettings:
     piston_divisions: int = 16
     cache_dir: Optional[str] = ".spkmod_cache"
     refine_gaps: bool = False                # mesh air gaps narrower than h/3 finer (they are always reported)
+    exterior: str = "bem"                    # "bem": full exterior BEM; "baffle": one waveguide cabinet radiating
+                                             # into an infinite baffle at its mouth plane (high frequencies)
     interior: str = "full"                   # "full": one coupled FEM-BEM per scene; "reuse": each cabinet's
                                              # interior FEM solved once in its own frame (fast layout changes)
 
@@ -177,6 +179,14 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
         if part_path and os.path.exists(part_path):          # resume after an interruption
             log.info("resuming: band group %d from %s", gi, part_path)
             parts.append(_load_part(part_path))
+            continue
+        if settings.exterior == "baffle":
+            from .baffled import solve_band_baffled
+            parts.append(solve_band_baffled(cabinets, sub, h, points, directions, image_points, air, settings))
+            log.info("bands up to %g Hz: %s", fmax, parts[-1]["mesh"])
+            if part_path:
+                os.makedirs(settings.cache_dir, exist_ok=True)
+                _save_part(part_path, parts[-1])
             continue
         if settings.interior == "reuse":
             from .reduced import solve_band_reduced
