@@ -112,6 +112,9 @@ def build_spec(spec, out_dir, base_dir=".", preview=True, name=None, quiet=False
             q["thickness"] = p["thickness"] / 1000
         if "motor" in p:
             q["motor"] = [v / 1000 for v in p["motor"]]
+        for k in ("recess", "cone_depth", "basket_wall"):
+            if k in p:
+                q[k] = p[k] / 1000
         pistons.append(q)
     if quiet:
         return step, pistons

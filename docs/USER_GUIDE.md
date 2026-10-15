@@ -77,6 +77,8 @@ cabinets:
     pistons:                     # one per diaphragm, in the CAD's own frame (metres)
       - {name: drv, center: [0.508, 0.275, 0.489], axis: [0.063, 0, 0.998], sd_cm2: 510.7,
          cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}       # motor: [diameter, depth]
+      # cone dish: recess: 0.030 sets the piston back 30 mm, with the dish air open to the front and a rigid basket
+      # ring (basket_wall, default 0.005) sealing it from behind; or cone_depth: 0.09 (volume Sd*depth/3 -> recess depth/3)
     stuffing: [{box: [x0, y0, z0, x1, y1, z1], sigma: 10000}]          # fibre fill, flow resistivity Pa s/m^2
     envelope: null               # default: bounding box of the solids (the FEM/BEM interface)
 
@@ -134,7 +136,8 @@ parts:                               # solids (merged)
 cutouts:                             # removed from all parts
   - {type: cylinder, center: [x, y, z], axis: [0, 0, 1], diameter: 282, depth: 40}
 pistons:
-  - {name: drv, center: [x, y, z], axis: [0, 0, 1], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}
+  - {name: drv, center: [x, y, z], axis: [0, 0, 1], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70],
+     recess: 30}                     # optional cone dish (mm), or cone_depth: 90; basket_wall: 5
 ```
 
 Rules:

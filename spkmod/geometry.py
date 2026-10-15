@@ -45,6 +45,13 @@ class Piston:
     cutout: Optional[float] = None       # frame / baffle hole diameter, default 1.2 d
     thickness: float = 0.008
     motor: Optional[Sequence[float]] = None   # (diameter, depth) rigid motor behind the cone
+    recess: float = 0.0                  # set the piston back by this much (cone dish air in front of it)
+    cone_depth: Optional[float] = None   # alternative to recess: dish depth, volume Sd*depth/3 -> recess depth/3
+    basket_wall: float = 0.005           # rigid basket ring sealing the dish from what is behind the baffle
+
+    @property
+    def recess_depth(self):
+        return self.recess or ((self.cone_depth or 0.0) / 3)
 
     @property
     def sd(self):
@@ -334,15 +341,27 @@ def _build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16,
             local += [((3, t), SOLID, None) for t in solids]
             for p in cab.pistons:
                 ax = np.asarray(p.axis, float) / np.linalg.norm(p.axis)
-                c = np.asarray(p.center, float)
+                c0 = np.asarray(p.center, float)
+                d = p.recess_depth
+                c = c0 - ax * d                          # recessed piston (d = 0: in the baffle plane)
                 base = c - ax * p.thickness / 2
                 r_p = p.diameter / 2
                 pis = occ.addCylinder(*base, *(ax * p.thickness), r_p)
                 local.append(((3, pis), PISTON, len(body_names)))
                 cut = p.cutout or 1.2 * p.diameter
-                if cut / 2 > r_p * (1 + 1e-6):           # no zero-width frame ring
-                    fr = occ.addCylinder(*base, *(ax * p.thickness), cut / 2)
+                base0 = c0 - ax * p.thickness / 2
+                if cut / 2 > r_p * (1 + 1e-6):           # frame ring in the baffle hole (no zero-width ring)
+                    fr = occ.addCylinder(*base0, *(ax * p.thickness), cut / 2)
+                    if d > 0:                            # leave the dish open to the front
+                        hole = occ.addCylinder(*base0, *(ax * p.thickness), r_p)
+                        fr = [t for dd, t in occ.cut([(3, fr)], [(3, hole)])[0] if dd == 3][0]
                     local.append(((3, fr), SOLID, "driver"))
+                if d > 0:                                # basket wall: piston back plane -> frame back plane
+                    ro = occ.addCylinder(*base, *(ax * d), r_p + p.basket_wall)
+                    ri = occ.addCylinder(*base, *(ax * d), r_p)
+                    for dd, t in occ.cut([(3, ro)], [(3, ri)])[0]:
+                        if dd == 3:
+                            local.append(((3, t), SOLID, "driver"))
                 if p.motor:
                     md, mdep = p.motor
                     mo = occ.addCylinder(*(base), *(-ax * mdep), md / 2)
