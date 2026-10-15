@@ -183,7 +183,20 @@ variants:
     offline: {polarity: {sub_rear: -1}}                     # also gain_db, mute: [ch], preset: party, filters: {ch: [CamillaDSP filter dicts]}
   - name: finer
     project: {solver: {h_max: 0.08}}                        # any deep merge into project.yml
+  - name: spread                                            # Monte Carlo over offline inputs: ONE acoustic solve
+    monte_carlo:
+      n: 64
+      seed: 1
+      method: lhs                                           # or random
+      vary:                                                 # paths into project.yml as written
+        drivers.12-280-W.Mms_g: {rel: 0.15}                 # uniform +-15 %
+        drivers.12-280-W.Bl: {sd_rel: 0.05}                 # normal, sigma 5 %
+        scenes.pole.ground_sigma: {range: [100000, 400000]} # uniform between limits (or sd: absolute sigma)
 ```
+
+A `monte_carlo` variant adds three rows: `<name>[p5]`, `<name>[p50]` and `<name>[p95]`. Each metric gets its own percentile over the samples, per zone and band, next to the nominal row.
+* **What can vary:** only inputs that leave the acoustic solve unchanged (`drivers.*`, `wiring.*`, `dsp.*`, `scenes.<s>.ground_sigma`).
+* **What it stores:** the variant's scene results (before drivers), in `acoustic/`. Each sample then only re-runs the driver network and the system sum.
 
 What triggers a new solve, and what doesn't:
 * **New solve:** variants that change geometry, solver settings, frequencies or listeners.
