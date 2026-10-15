@@ -56,6 +56,14 @@ Output in `sweeps/<name>/`:
 * `table.csv` and `table.txt`: per variant, zone and band, the median level (dB SPL at 0 dBFS), the change against the reference variant, tonal p10/p90 and rms, holes over 6 and 3 dB, and peak excursion;
 * the per-channel fields (`fields/*.npz`), so further offline changes need no solve.
 
+Comparisons:
+```bash
+spkmod compare sweeps/sub_layouts --a m2m --b line4                 # difference table B - A per zone and band
+spkmod compare sweeps/sub_layouts --variant m2m --reference examples/party_rig/floor_model_deep30_x80.csv
+spkmod report project.yml --reference floor_model_deep30_x80.csv    # zones table + floor vs floor model
+```
+A sweep with `reference_csv:` also writes `reference.csv`, and every sweep writes `perfreq.csv` (zone median and spread at each frequency). The reference is aligned by its median offset, because the floor model's level is arbitrary, and is compared at its own sixth-octave resolution.
+
 Zones come from the project's `zones:`, the sweep's `zones:` and the listener set (`floor`). The metric definitions are in `spkmod/metrics.py`.
 
 Python API:
