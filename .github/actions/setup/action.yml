@@ -14,3 +14,8 @@ runs:
         cache-dependency-path: pyproject.toml
     - shell: bash
       run: pip install -e ".[fast,test]"
+    - shell: bash
+      run: |
+        # pocl's LLVM aborts on some AMD EPYC (Zen 5) runners; numba is safe everywhere
+        if grep -q "AMD" /proc/cpuinfo; then echo "SPKMOD_BEM_DEVICE=numba" >> "$GITHUB_ENV"; fi
+        grep -m1 "model name" /proc/cpuinfo || true

@@ -271,7 +271,7 @@ def _solve_group(job):
                 if not len(fs):             # a frequency shard outside this scene's range
                     continue
                 results[s] = solve_scene(pr.cabinets(s), fs, points=points, directions=None, ground=ground,
-                                         image_points=not ground, air=pr.air, settings=pr.settings,
+                                         image_points=not ground, air=pr.air, settings=pr.scene_settings(s),
                                          center=sc.get("acoustic_center"))
         save_fields(pr.system(results), out_path)
     return {"key": job["key"], "time_s": time.time() - t0}
