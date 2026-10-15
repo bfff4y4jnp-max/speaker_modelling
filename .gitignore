@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.spkmod_cache/
+**/.spkmod_cache/
+examples/*/report/
+*.egg-info/

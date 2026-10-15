@@ -1,0 +1,111 @@
+# Outdoor Party Rig (rev 2) - spkmod project TEMPLATE.
+#
+# Fill in every TODO before solving:
+#   * STEP exports of each cabinet (solid parts only, see docs/DESIGN.md "Preparing CAD")
+#   * piston centres/axes in each cabinet's CAD coordinates (metres)
+#   * driver parameters from datasheets (better: your own impedance measurements)
+#   * the stack layout (positions/rotations) from the floor model
+#   * the CamillaDSP config actually running on the Pi
+# Coordinates: x forward onto the dance floor, y left, z up, ground at z = 0.
+
+air: {temperature: 18, humidity: 70}
+
+solver:
+  elements_per_wavelength: 6
+  h_max: 0.15
+  memory_gb: null            # auto: 60 % of free RAM (16 GB laptop or cloud container)
+  cache_dir: .spkmod_cache
+
+# Quick look: per_octave 12. Final: 24 (horn resonances are sharp).
+frequencies: {min: 25, max: 3000, per_octave: 12}
+
+drivers:
+  12-280-W:  {Fs: null, Qes: null, Qms: null, Vas_l: null, Re: null, Le_mH: null, Sd_cm2: null, Xmax_mm: null}  # TODO
+  8FE200:    {Fs: null, Qes: null, Qms: null, Vas_l: null, Re: null, Le_mH: null, Sd_cm2: null, Xmax_mm: null}  # TODO FaitalPRO datasheet
+  PC105-4:   {Fs: null, Qes: null, Qms: null, Vas_l: null, Re: null, Le_mH: null, Sd_cm2: null, Xmax_mm: null}  # TODO Dayton datasheet
+  # DE250 on the printed waveguide: modelled as a piston at the waveguide throat
+  # (exit of the driver), valid as a radiation/coverage model; its own
+  # compression-chamber response comes from the datasheet. TODO
+  DE250:     {Re: null, Bl: null, Mms_g: null, Cms_mm_per_N: null, Rms: null, Sd_cm2: null}
+
+cabinets:
+  fold3_35:                         # 1216 x 525 x 550 mm tapped horn
+    step: cad/fold3_35.step         # TODO export
+    pistons:                        # TODO: driver position in the CAD; axis = cone forward direction
+      - {name: drv, center: [0.0, 0.0, 0.0], axis: [0, 0, 1], sd_cm2: null, cutout: 0.282, thickness: 0.008,
+         motor: [0.17, 0.10]}       # magnet diameter, depth (m): displaces air in the horn path
+  lowmid:                           # 676 x 468 x 496 mm folded horn, 2 x 12-280-W
+    step: cad/lowmid.step           # TODO
+    pistons:
+      - {name: drv_a, center: [0.0, 0.0, 0.0], axis: [0, 0, 1], sd_cm2: null, cutout: 0.282}
+      - {name: drv_b, center: [0.0, 0.0, 0.0], axis: [0, 0, 1], sd_cm2: null, cutout: 0.282}
+  polebox:                          # baffle 360 x 850 mm, 2 x 8FE200 + DE250 waveguide (include waveguide solid)
+    step: cad/polebox.step          # TODO
+    pistons:
+      - {name: mid_low, center: [0.0, 0.0, 0.0], axis: [1, 0, 0], sd_cm2: null, cutout: 0.184}
+      - {name: mid,     center: [0.0, 0.0, 0.0], axis: [1, 0, 0], sd_cm2: null, cutout: 0.184}
+      - {name: hf,      center: [0.0, 0.0, 0.0], axis: [1, 0, 0], diameter: 0.0254, cutout: 0.0254, thickness: 0.004}
+    stuffing: []                    # e.g. [{box: [x0,y0,z0,x1,y1,z1], sigma: 10000}] for damped rear chambers
+  fill:                             # 140 x 560 x 180 mm sealed, 2 x PC105-4
+    step: cad/fill.step             # TODO
+    pistons:
+      - {name: a, center: [0.0, 0.0, 0.0], axis: [1, 0, 0], sd_cm2: null}
+      - {name: b, center: [0.0, 0.0, 0.0], axis: [1, 0, 0], sd_cm2: null}
+
+scenes:
+  # Everything on the ground interacts strongly below ~400 Hz (mouth-to-mouth
+  # sub rows, low-mid in front): solve it as ONE scene on rigid ground.
+  stack:
+    ground: true
+    max_freq: 500
+    items:                           # TODO positions/rotations from the floor model layout
+      - {cabinet: fold3_35, name: sub_rear_l,  position: [-1.8, 0.0,  0.0], rotation: [0, 0, 0]}
+      - {cabinet: fold3_35, name: sub_rear_r,  position: [-1.8, -0.55, 0.0], rotation: [0, 0, 0]}
+      - {cabinet: fold3_35, name: sub_front_l, position: [ 0.6, 0.0,  0.0], rotation: [0, 0, 180]}
+      - {cabinet: fold3_35, name: sub_front_r, position: [ 0.6, -0.55, 0.0], rotation: [0, 0, 180]}
+      - {cabinet: lowmid,   name: lowmid,      position: [ 0.7, -0.3, 0.0], rotation: [0, 0, 0]}
+  # Pole box at 3 m+: free-field BEM, grass reflection added at system level.
+  # Quick results: max_freq 3000 (BEM covers mids + waveguide loading).
+  # Full range: raise max_freq to 16000 (slow; consider solver.h_max 0.004 only for this scene).
+  pole:
+    ground: false
+    ground_sigma: 200000
+    min_freq: 200
+    max_freq: 3000
+    items:
+      - {cabinet: polebox, name: pole, position: [0.9, -0.18, 2.7], rotation: [0, 10, 0]}   # TODO tilt
+  fills:
+    ground: false
+    ground_sigma: 200000
+    min_freq: 250
+    max_freq: 3000
+    items:
+      - {cabinet: fill, name: fill_l, position: [1.0,  4.0, 2.6], rotation: [0, 0, -45]}  # TODO aim
+      - {cabinet: fill, name: fill_r, position: [1.0, -4.0, 2.6], rotation: [0, 0, 45]}
+
+wiring:                              # body = <item name>.<piston name>
+  stack:
+    sub_rear_l.drv:  {driver: 12-280-W, channel: sub_rear}
+    sub_rear_r.drv:  {driver: 12-280-W, channel: sub_rear}
+    sub_front_l.drv: {driver: 12-280-W, channel: sub_front}
+    sub_front_r.drv: {driver: 12-280-W, channel: sub_front}
+    lowmid.drv_a:    {driver: 12-280-W, channel: lowmid}
+    lowmid.drv_b:    {driver: 12-280-W, channel: lowmid}
+  pole:
+    pole.mid_low: {driver: 8FE200, channel: mid_low}
+    pole.mid:     {driver: 8FE200, channel: mid}
+    pole.hf:      {driver: DE250,  channel: hf}
+  fills:
+    fill_l.a: {driver: PC105-4, channel: fill_l}
+    fill_l.b: {driver: PC105-4, channel: fill_l}
+    fill_r.a: {driver: PC105-4, channel: fill_r}
+    fill_r.b: {driver: PC105-4, channel: fill_r}
+
+dsp:
+  camilladsp: dsp/party.yml          # TODO copy the Pi's config (and FIR files) here
+  outputs: {sub_front: 0, sub_rear: 1, lowmid: 2, mid_low: 3, mid: 4, hf: 5, fill_l: 6, fill_r: 7}   # TODO match DAC8x
+  input: [0.5, 0.5]                  # mono program; use [1, 0] / [0, 1] to study the stereo fills
+  volts_at_0dbfs: 32                 # bridged TPA3255 at 48 V, ~32 V rms
+
+listeners:                           # 20 m^2 floor, three ear heights (TODO match the floor model's 335 spots)
+  grid: {x: [1.5, 6.0], y: [-2.25, 2.25], spacing: 0.25, heights: [1.4, 1.6, 1.8]}

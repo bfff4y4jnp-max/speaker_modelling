@@ -1,0 +1,24 @@
+# Minimal CamillaDSP v2 config: stereo in, sub (out 0) + top (out 1), LR4 at 150 Hz.
+devices:
+  samplerate: 48000
+  chunksize: 1024
+  capture: {type: Alsa, channels: 2, device: "hw:0", format: S32LE}
+  playback: {type: Alsa, channels: 2, device: "hw:1", format: S32LE}
+mixers:
+  mono:
+    channels: {in: 2, out: 2}
+    mapping:
+      - dest: 0
+        sources: [{channel: 0, gain: -6}, {channel: 1, gain: -6}]
+      - dest: 1
+        sources: [{channel: 0, gain: -6}, {channel: 1, gain: -6}]
+filters:
+  sub_lp: {type: BiquadCombo, parameters: {type: LinkwitzRileyLowpass, freq: 150, order: 4}}
+  sub_hp: {type: BiquadCombo, parameters: {type: ButterworthHighpass, freq: 30, order: 4}}
+  top_hp: {type: BiquadCombo, parameters: {type: LinkwitzRileyHighpass, freq: 150, order: 4}}
+  top_delay: {type: Delay, parameters: {delay: 1.5, unit: ms}}
+  top_gain: {type: Gain, parameters: {gain: -6}}
+pipeline:
+  - {type: Mixer, name: mono}
+  - {type: Filter, channels: [0], names: [sub_lp, sub_hp]}
+  - {type: Filter, channels: [1], names: [top_hp, top_delay, top_gain]}
