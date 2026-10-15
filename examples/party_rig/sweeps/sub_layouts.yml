@@ -1,0 +1,38 @@
+# Example sweep (not run by the repo): sub layouts and rear-row delay, subs only.
+#   spkmod sweep examples/party_rig/sweeps/sub_layouts.yml --dry-run     # list variants / solves needed
+#   spkmod sweep examples/party_rig/sweeps/sub_layouts.yml --parallel 2
+# Positions follow project.yml (deep30 local frame: x 0..1.216 with the mouth at x = 1.216, y 0..0.55, z 0..0.715).
+project: ../project.yml
+scenes: [stack]
+frequencies: {min: 25, max: 165, per_octave: 24}
+zones:
+  behind: {box: [-8.0, -5.0, -3.0, 3.0], heights: [1.6], spacing: 0.5}
+  # dj: {box: [x0, x1, y0, y1], heights: [1.6], spacing: 0.25}      # TODO: DJ position
+bands: {25-30: [25, 30], 30-36: [30, 36], 36-45: [36, 45], 45-60: [45, 60], 60-80: [60, 80], 80-100: [80, 100],
+        90-180: [90, 180]}
+dsp: project              # the project's CamillaDSP (rear row inverted + 3.50 ms there)
+reference: m2m
+parallel: 1
+variants:
+  - name: m2m             # current build: 2 + 2 mouth to mouth, low-mid included
+  - name: m2m_subs_only
+    remove: [lowmid]
+  - name: rear_delay      # offline: extra delay on top of the DSP's 3.50 ms, no new solve
+    base: m2m
+    grid: {offline.delay_ms.sub_rear: [-0.5, 0.0, 0.5, 1.0]}
+  - name: line4           # all four facing forward in a line, mouths at the stack face
+    remove: [sub_rear_l, sub_rear_r]
+    move:
+      sub_front_l: {position: [-1.216, 0.0, 0.0], rotation: [0, 0, 0]}
+      sub_front_r: {position: [-1.216, -0.55, 0.0], rotation: [0, 0, 0]}
+    add:
+      - {cabinet: deep30, name: sub_out_l, position: [-1.216, 0.55, 0.0], wiring: {drv: {driver: 12-280-W, channel: sub_front}}}
+      - {cabinet: deep30, name: sub_out_r, position: [-1.216, -1.1, 0.0], wiring: {drv: {driver: 12-280-W, channel: sub_front}}}
+  - name: block2x2        # two wide, two high, facing forward
+    remove: [sub_rear_l, sub_rear_r]
+    move:
+      sub_front_l: {position: [-1.216, 0.0, 0.0], rotation: [0, 0, 0]}
+      sub_front_r: {position: [-1.216, -0.55, 0.0], rotation: [0, 0, 0]}
+    add:
+      - {cabinet: deep30, name: sub_top_l, position: [-1.216, 0.0, 0.715], wiring: {drv: {driver: 12-280-W, channel: sub_front}}}
+      - {cabinet: deep30, name: sub_top_r, position: [-1.216, -0.55, 0.715], wiring: {drv: {driver: 12-280-W, channel: sub_front}}}

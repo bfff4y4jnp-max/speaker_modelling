@@ -37,6 +37,27 @@ Handover for the design project (creating cabinet specs without CAD software): `
 The party-rig template is `examples/party_rig/project.yml`. Fill in its TODOs
 (STEP files, driver data, layout, CamillaDSP config).
 
+## Sweeps: many variants, one table
+
+```bash
+spkmod sweep examples/party_rig/sweeps/sub_layouts.yml --dry-run    # variants and the solves they need
+spkmod sweep examples/party_rig/sweeps/sub_layouts.yml --parallel 2 # solve (cached, resumable) + table
+```
+
+A sweep file names a base project, the scenes and a list of variants. A variant can do any of these:
+* move, add, remove or replace items;
+* swap or generate cabinets (`generator: file.py:func` with `params`);
+* change wiring, drivers or any project setting;
+* make offline-only changes: channel delay, polarity, gain, mute, extra CamillaDSP filters, DSP preset. These reuse an existing solve.
+
+`base:` inherits from another variant and `grid:` expands parameter lists.
+
+Output in `sweeps/<name>/`:
+* `table.csv` and `table.txt`: per variant, zone and band, the median level (dB SPL at 0 dBFS), the change against the reference variant, tonal p10/p90 and rms, holes over 6 and 3 dB, and peak excursion;
+* the per-channel fields (`fields/*.npz`), so further offline changes need no solve.
+
+Zones come from the project's `zones:`, the sweep's `zones:` and the listener set (`floor`). The metric definitions are in `spkmod/metrics.py`.
+
 Python API:
 
 ```python

@@ -53,14 +53,19 @@ def _solid(occ, p, base_dir):
 
 
 def build(spec_path, out_dir=None, preview=True):
-    """Build STEP from a panel spec. Returns (step_path, pistons list in metres)."""
-    import gmsh
+    """Build STEP from a panel spec file. Returns (step_path, pistons list in metres)."""
     with open(spec_path) as fh:
         spec = yaml.safe_load(fh)
     base = os.path.dirname(os.path.abspath(spec_path))
-    out_dir = out_dir or base
+    return build_spec(spec, out_dir or base, base, preview=preview)
+
+
+def build_spec(spec, out_dir, base_dir=".", preview=True, name=None, quiet=False):
+    """Build STEP from a spec dict (same format as the YAML). Returns (step_path, pistons in metres)."""
+    import gmsh
+    base = base_dir
     os.makedirs(out_dir, exist_ok=True)
-    name = spec["name"]
+    name = name or spec["name"]
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
@@ -106,6 +111,8 @@ def build(spec_path, out_dir=None, preview=True):
         if "motor" in p:
             q["motor"] = [v / 1000 for v in p["motor"]]
         pistons.append(q)
+    if quiet:
+        return step, pistons
     print(f"{step}: bbox {bb[3] - bb[0]:.0f} x {bb[4] - bb[1]:.0f} x {bb[5] - bb[2]:.0f} mm, "
           f"wood volume {vol / 1e9 * 1000:.1f} L")
     print("cabinets:\n  %s:\n    step: %s\n    pistons:" % (name, os.path.relpath(step)))

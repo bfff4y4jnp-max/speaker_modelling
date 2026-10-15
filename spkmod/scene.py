@@ -65,7 +65,7 @@ class SceneResult:
 
     def save(self, path):
         d = {k: v for k, v in self.__dict__.items() if v is not None and k not in ("meta", "body_names")}
-        np.savez_compressed(path, body_names=np.array(self.body_names), meta=json.dumps(self.meta), **d)
+        _atomic_savez(path, body_names=np.array(self.body_names), meta=json.dumps(self.meta), **d)
 
     @classmethod
     def load(cls, path):
@@ -92,6 +92,35 @@ def _tri_area_normal(nodes, tris):
     return a, cr / (2 * a[:, None]), p.mean(1)
 
 
+def _atomic_savez(path, **arrays):
+    """Write .npz via a temporary file so an interrupted run never leaves a corrupt cache entry."""
+    tmp = path[:-4] + f".tmp{os.getpid()}.npz"
+    np.savez_compressed(tmp, **arrays)
+    os.replace(tmp, path)
+
+
+def _file_hash(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+def _save_part(path, part):
+    arrays = {k: v for k, v in part.items() if isinstance(v, np.ndarray)}
+    info = {k: v for k, v in part.items() if not isinstance(v, np.ndarray) and v is not None}
+    _atomic_savez(path, info=json.dumps(info), **arrays)
+
+
+def _load_part(path):
+    z = np.load(path, allow_pickle=False)
+    part = json.loads(str(z["info"]))
+    for k in ("Za", "T", "T_img", "T_far", "U_ap", "ap_area", "center"):
+        part[k] = z[k] if k in z.files else None
+    return part
+
+
 def _hash(obj):
     return hashlib.sha1(repr(obj).encode()).hexdigest()[:16]
 
@@ -112,10 +141,13 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
     directions = None if directions is None else np.asarray(directions, float)
     key = None
     if settings.cache_dir:
-        files = [(c.step, os.path.getmtime(c.step)) for c in cabinets if c.step]
-        key = _hash((repr(cabinets), files, freqs.tolist(), None if points is None else points.round(6).tolist(),
+        # STEP files by content (not path/mtime), settings without the run-environment fields
+        cabs = [(c.name, os.path.basename(c.step) if c.step else None, _file_hash(c.step) if c.step else None,
+                 repr(c.pistons), repr(c.stuffing), c.envelope, tuple(c.position), tuple(c.rotation)) for c in cabinets]
+        st = {k: v for k, v in settings.__dict__.items() if k not in ("memory_gb", "cache_dir")}
+        key = _hash((cabs, freqs.tolist(), None if points is None else points.round(6).tolist(),
                      None if directions is None else directions.round(6).tolist(), ground, image_points,
-                     repr(air), repr(settings), 3))
+                     repr(air), sorted(st.items()), center, 4))
         path = os.path.join(settings.cache_dir, f"scene_{key}.npz")
         if os.path.exists(path):
             log.info("cache hit %s", path)
@@ -132,8 +164,13 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
             groups[-1][1].append(fb)
         else:
             groups.append([h, [fb]])
-    for h, sub in groups:
+    for gi, (h, sub) in enumerate(groups):
         fmax = max(fb.max() for fb in sub)
+        part_path = os.path.join(settings.cache_dir, f"scene_{key}_part{gi}.npz") if key else None
+        if part_path and os.path.exists(part_path):          # resume after an interruption
+            log.info("resuming: band group %d from %s", gi, part_path)
+            parts.append(_load_part(part_path))
+            continue
         for attempt in range(4):
             mesh = build_scene_mesh(cabinets, h, settings.h_min, ground=ground,
                                     piston_divisions=settings.piston_divisions)
@@ -148,6 +185,9 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
                         "accuracy near %g Hz reduced", est / 1e9, budget / 1e9, h, fmax)
         log.info("bands up to %g Hz: %s", fmax, mesh.summary())
         parts.append(_solve_band(mesh, sub, points, directions, ground, image_points, air, settings))
+        if part_path:
+            os.makedirs(settings.cache_dir, exist_ok=True)
+            _save_part(part_path, parts[-1])
     res = SceneResult(
         freqs=freqs, body_names=parts[0]["names"],
         Za=np.concatenate([p["Za"] for p in parts]),
@@ -163,6 +203,10 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
     if key:
         os.makedirs(settings.cache_dir, exist_ok=True)
         res.save(os.path.join(settings.cache_dir, f"scene_{key}.npz"))
+        for gi in range(len(groups)):
+            pp = os.path.join(settings.cache_dir, f"scene_{key}_part{gi}.npz")
+            if os.path.exists(pp):
+                os.remove(pp)
     return res
 
 
