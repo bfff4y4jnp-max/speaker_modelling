@@ -35,10 +35,11 @@ For lowmid_cone (static STEPs, before #18) the merged field files on the branch 
 already make keys platform-independent (gmsh/OCC version, float formatting), please do, and add a test that the
 key of a fixed example matches a stored value.
 
-## 6. All-zero fields after a "successful" merge
-Run 38811745008 (branch claude/lowmid-variants, before #18 was merged into that branch) went green, but 10 of the
-13 low-mid variants were written with p = 0 at every point and frequency and identical x and Z (x max 1.03e-4 m/V,
-|Z| 10.96 / 5.20 / 3.67 ohm at the first frequencies) despite different geometries; the 3 variants whose cabinets
-had just changed were fine. The table shows -206 dB. Probably the same key mismatch as #18 (merge filled the
-missing groups with zeros). Please confirm #18 covers it, and make merge refuse a field whose pressure is all zero
-or bit-identical to another variant's. Rerun with main merged in: run 38815909571.
+## 6. Silent empty interior (0 tets) gives all-zero fields
+Root cause found: in the low-mid variants with `cutout: 0.282` in a 282 mm CAD hole (cav37-based boxes),
+`build_scene_mesh` returns **0 air tets** at every h (0.04-0.15) with no error. The interior operator logs
+"0 tets", the pistons are unloaded (x per V ~3x too big, identical Z for every geometry) and every pressure is
+exactly 0; the sweep goes green and the table shows -206 dB (runs 38811745008, 38815909571). Cutout 0.29 gives
+25-48k tets. Wanted: raise an error when a cabinet with pistons meshes to 0 tets (or a piston face touches no air
+on either side), name the piston, and try the item 4 auto-fix (enlarge the cutout) first. Merge should also refuse
+a field whose pressure is all zero.
