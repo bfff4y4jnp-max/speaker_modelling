@@ -121,7 +121,9 @@ class Project:
             base = copy.deepcopy(self.cfg["cabinets"][it["cabinet"]])
             pistons = [Piston(name=p["name"], center=p["center"], axis=p["axis"],
                               diameter=p.get("diameter") or 2 * np.sqrt(p["sd_cm2"] / 1e4 / np.pi),
-                              cutout=p.get("cutout"), thickness=p.get("thickness", 0.008), motor=p.get("motor"))
+                              cutout=p.get("cutout"), thickness=p.get("thickness", 0.008), motor=p.get("motor"),
+                              recess=p.get("recess", 0.0), cone_depth=p.get("cone_depth"),
+                              basket_wall=p.get("basket_wall", 0.005))
                        for p in base.get("pistons", [])]
             stuffing = [(s["box"], s["sigma"]) for s in base.get("stuffing", [])]
             out.append(Cabinet(name=it.get("name", it["cabinet"]), step=self._p(base["step"]) if base.get("step") else None,

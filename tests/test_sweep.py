@@ -106,3 +106,96 @@ def test_sharded_sweep_matches_single_run(tmp_path):
     for a, b in zip(single, sharded):
         assert abs(a["median_db"] - b["median_db"]) < 1e-3 and abs(a["p90"] - b["p90"]) < 1e-3
     assert sw.shards(sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True)) == []   # nothing left to solve
+
+
+def test_generated_cabinet_survives_sharding_on_fresh_runners(tmp_path):
+    """Each 'runner' regenerates the cabinet STEP (new date stamp, new OCC counter): keys must not change."""
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    (d / "gen.py").write_text(GEN)
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": [40.0, 60.0]},
+            "listeners": {"points": [[3, 0, 1.6], [4, 1, 1.6]]}, "bands": {"35-65": [35, 65]},
+            "variants": [{"name": "base"},
+                         {"name": "gen", "cabinets": {"sub": {"generator": "gen.py:box", "params": {"w": 0.45}}}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    out = d / "runs" / "s"
+
+    def fresh_runner():
+        shutil.rmtree(out / "cad", ignore_errors=True)        # a new runner has no generated STEP yet
+        return sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True)
+
+    shards = sw.shards(fresh_runner())
+    for s in shards:
+        sw.solve_shard(fresh_runner(), s["shard"])
+    sw.merge_shards(fresh_runner())
+    rows = sw.tables(fresh_runner())
+    assert {r["variant"] for r in rows} == {"base", "gen"}
+
+
+def test_incomplete_sweep_fails_loudly(tmp_path):
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": [40.0]},
+            "listeners": {"points": [[3, 0, 1.6]]}, "variants": [{"name": "a"}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    with pytest.raises(sw.SweepIncomplete, match="1 of 1 variants: a"):
+        sw.tables(sw.prepare(str(d / "sweep.yml"), out=str(tmp_path / "o"), quiet=True))
+    assert "INCOMPLETE" in (tmp_path / "o" / "table.txt").read_text()
+
+
+def test_monte_carlo_reuses_one_solve_and_reports_percentiles(tmp_path):
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": [40.0, 50.0, 60.0]},
+            "listeners": {"points": [[3, 0, 1.6], [4, 1, 1.6]]}, "bands": {"35-65": [35, 65]}, "dsp": "flat",
+            "variants": [{"name": "nom"},
+                         {"name": "mc", "monte_carlo": {"n": 16, "seed": 3, "vary": {
+                             "drivers.woofer12.Qes": {"rel": 0.25}, "drivers.woofer12.Fs": {"sd_rel": 0.05}}}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    ctx = sw.prepare(str(d / "sweep.yml"), out=str(d / "single"), quiet=True)
+    assert len(ctx["groups"]) == 1                      # one acoustic solve for nominal + all samples
+    rows = sw.run_sweep(str(d / "sweep.yml"), out=str(d / "single"))
+    get = lambda v: next(r for r in rows if r["variant"] == v and r["zone"] == "floor")
+    p5, p50, p95, nom = get("mc[p5]"), get("mc[p50]"), get("mc[p95]"), get("nom")
+    assert p5["median_db"] < p50["median_db"] < p95["median_db"]
+    assert abs(p50["median_db"] - nom["median_db"]) < 1.0 and p95["median_db"] - p5["median_db"] > 0.1
+    assert abs(get("mc")["median_db"] - nom["median_db"]) < 1e-9          # nominal row unchanged
+    # the same through shards on fresh runners
+    out = d / "sharded"
+    for s in sw.shards(sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True)):
+        sw.solve_shard(sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True), s["shard"])
+    sw.merge_shards(sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True))
+    rows2 = sw.tables(sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True))
+    get2 = lambda v: next(r for r in rows2 if r["variant"] == v and r["zone"] == "floor")
+    assert abs(get2("mc[p95]")["median_db"] - p95["median_db"]) < 1e-3
+
+
+def test_monte_carlo_rejects_acoustic_inputs():
+    from spkmod.sweep import _check_mc
+    with pytest.raises(ValueError, match="offline inputs"):
+        _check_mc({"vary": {"cabinets.sub.pistons": {"rel": 0.1}}}, "v")
+
+
+def test_offline_crowd_attenuates_more_at_high_frequency(tmp_path):
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    crowd = {"box": [1.0, 7.0, -3.0, 3.0], "height": 1.7, "sigma": 5000}
+    spec = {"project": "project.yml", "scenes": ["tops"], "frequencies": {"list": [150.0, 500.0]},
+            "listeners": {"points": [[4, 0, 1.6], [5, 1, 1.6], [5, -1, 1.4]]}, "dsp": "flat",
+            "bands": {"lo": [140, 160], "hi": [480, 520]},
+            "variants": [{"name": "empty"},
+                         {"name": "packed", "base": "empty", "offline": {"crowd": crowd}},
+                         {"name": "elsewhere", "base": "empty",
+                          "offline": {"crowd": dict(crowd, box=[20.0, 30.0, 20.0, 30.0])}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    ctx = sw.prepare(str(d / "sweep.yml"), out=str(d / "o"), quiet=True)
+    assert len(ctx["groups"]) == 1
+    rows = sw.run_sweep(str(d / "sweep.yml"), out=str(d / "o"))
+    g = lambda v, b: next(r["median_db"] for r in rows if r["variant"] == v and r["band"] == b and r["zone"] == "floor")
+    drop_lo, drop_hi = g("empty", "lo") - g("packed", "lo"), g("empty", "hi") - g("packed", "hi")
+    assert 0 < drop_lo < drop_hi
+    assert abs(g("elsewhere", "hi") - g("empty", "hi")) < 1e-9

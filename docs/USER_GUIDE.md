@@ -38,6 +38,7 @@ What it does:
 Rules of thumb:
 * **One sweep file per push.** If several change in one push, only the first is solved (with a warning); start the others with Run workflow.
 * **Never edit `runs/<name>/` by hand.** To start over, delete `runs/<name>/fields/`.
+* **If any variant ends up with no solved fields, the merge fails loudly.** The run goes red, `table.txt` starts with an `!! INCOMPLETE` line naming the variants, and the partial table is kept as the run's `results-<name>` artifact. Nothing is committed.
 * **Runner type** is the repo variable `SPKMOD_RUNNER` (default `ubuntu-latest`). Larger paid runners work unchanged.
 * **Run time:** the `sub_layouts` example (8 variants, 4 solves, 67 frequencies, 1096 listener points) runs as 12 shards of about 2–3 minutes each.
 
@@ -76,6 +77,8 @@ cabinets:
     pistons:                     # one per diaphragm, in the CAD's own frame (metres)
       - {name: drv, center: [0.508, 0.275, 0.489], axis: [0.063, 0, 0.998], sd_cm2: 510.7,
          cutout: 0.282, thickness: 0.008, motor: [0.156, 0.07]}       # motor: [diameter, depth]
+      # cone dish: recess: 0.030 sets the piston back 30 mm, with the dish air open to the front and a rigid basket
+      # ring (basket_wall, default 0.005) sealing it from behind; or cone_depth: 0.09 (volume Sd*depth/3 -> recess depth/3)
     stuffing: [{box: [x0, y0, z0, x1, y1, z1], sigma: 10000}]          # fibre fill, flow resistivity Pa s/m^2
     envelope: null               # default: bounding box of the solids (the FEM/BEM interface)
 
@@ -133,7 +136,8 @@ parts:                               # solids (merged)
 cutouts:                             # removed from all parts
   - {type: cylinder, center: [x, y, z], axis: [0, 0, 1], diameter: 282, depth: 40}
 pistons:
-  - {name: drv, center: [x, y, z], axis: [0, 0, 1], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70]}
+  - {name: drv, center: [x, y, z], axis: [0, 0, 1], sd_cm2: 510.7, cutout: 282, thickness: 8, motor: [156, 70],
+     recess: 30}                     # optional cone dish (mm), or cone_depth: 90; basket_wall: 5
 ```
 
 Rules:
@@ -177,9 +181,25 @@ variants:
     base: m2m
     grid: {offline.delay_ms.sub_rear: [-0.5, 0, 0.5]}       # expands to rear_delay[sub_rear=-0.5] ...
     offline: {polarity: {sub_rear: -1}}                     # also gain_db, mute: [ch], preset: party, filters: {ch: [CamillaDSP filter dicts]}
+  - name: packed                                            # crowd on the floor (offline: no new solve)
+    base: m2m
+    offline: {crowd: {box: [1.0, 6.0, -2.5, 2.5], height: 1.7, sigma: 5000}}
   - name: finer
     project: {solver: {h_max: 0.08}}                        # any deep merge into project.yml
+  - name: spread                                            # Monte Carlo over offline inputs: ONE acoustic solve
+    monte_carlo:
+      n: 64
+      seed: 1
+      method: lhs                                           # or random
+      vary:                                                 # paths into project.yml as written
+        drivers.12-280-W.Mms_g: {rel: 0.15}                 # uniform +-15 %
+        drivers.12-280-W.Bl: {sd_rel: 0.05}                 # normal, sigma 5 %
+        scenes.pole.ground_sigma: {range: [100000, 400000]} # uniform between limits (or sd: absolute sigma)
 ```
+
+A `monte_carlo` variant adds three rows: `<name>[p5]`, `<name>[p50]` and `<name>[p95]`. Each metric gets its own percentile over the samples, per zone and band, next to the nominal row.
+* **What can vary:** only inputs that leave the acoustic solve unchanged (`drivers.*`, `wiring.*`, `dsp.*`, `scenes.<s>.ground_sigma`).
+* **What it stores:** the variant's scene results (before drivers), in `acoustic/`. Each sample then only re-runs the driver network and the system sum.
 
 What triggers a new solve, and what doesn't:
 * **New solve:** variants that change geometry, solver settings, frequencies or listeners.
@@ -214,7 +234,13 @@ Comparisons:
 * **Phasors and levels.** All phasors are rms. Levels are dB SPL re 20 µPa. Excursion peaks are √2·|x|.
 * **Ground.** On-ground scenes use a rigid ground in the BEM (correct for grass below about 300 Hz). Elevated scenes use image points with `ground_reflection` or `ground_sigma`.
 * **Near-surface points.** Points closer than about one element size (h) to a box surface are less accurate. Keep zones at least h away.
-* **Rigid walls, small signal.** No panel vibration, no Bl(x)/Cms(x), no thermal compression, no crowd absorption.
+* **Rigid walls, small signal.** No panel vibration, no Bl(x)/Cms(x), no thermal compression.
+* **The crowd (`offline: crowd`).**
+  * **Model:** the crowd is an equivalent porous layer: a Miki fluid with flow resistivity `sigma`, filling `box` up to `height`. Each scene's direct path and ground-image path are attenuated along the stretch of the straight ray from the scene's acoustic centre that lies inside that volume. So a packed floor mainly removes the ground reflection and the high frequencies at head height.
+  * **Simplifications:** refraction and scattering at the crowd's edges are ignored.
+  * **Ground scenes:** for on-ground scenes the ground reflection is inside the solve, so the direct-path factor is applied to their total.
+  * **Calibration:** sigma is a fit parameter; start around 2–20 kPa·s/m² and calibrate against a measurement if one exists.
+  * **Fields:** it needs fields written by this version. Older ones raise an error asking for a re-solve.
 * **Frequency range of the 3D model.** The full-box BEM is good up to where its mesh fits in memory: 16 GB covers about 9.6k BEM nodes, or about 17k when only a few frequencies are asked per band. For the pole box that is roughly 4–6 kHz.
 * **The high-frequency waveguide model (`exterior: baffle`).** For the band above that limit, give the waveguide its own cabinet:
   * The solids are the bore and its face. The only opening is the mouth, which must lie in one plane: use a STEP in a frame where the face is axis-aligned, or set `envelope:` to a box aligned with the face.

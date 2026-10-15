@@ -187,6 +187,28 @@ def cmd_compare(a):
 
 
 
+def _sweep_cmd(a, sw):
+    only = a.only.split(",") if a.only else None
+    if a.shards or a.shard is not None or a.merge:
+        import json
+        ctx = sw.prepare(a.spec, only, a.out, quiet=a.shards)
+        if a.shards:
+            sh = sw.shards(ctx, a.max_jobs)
+            for s in sh:
+                print(f"shard {s['shard']:2d} group {s['group']} {s['freqs'][0]:7.1f}-{s['freqs'][-1]:7.1f} Hz "
+                      f"{len(s['freqs']):3d} freqs cost {s['cost']:.0f}", file=sys.stderr)
+            print(json.dumps([s["shard"] for s in sh]))
+        elif a.shard is not None:
+            t = sw.solve_shard(ctx, a.shard, a.max_jobs)
+            print(f"shard {a.shard} solved in {t / 60:.1f} min")
+        else:
+            keys = sw.merge_shards(ctx)
+            print(f"merged {len(keys)} fields")
+            sw.tables(sw.prepare(a.spec, only, a.out, quiet=True))
+    else:
+        sw.run_sweep(a.spec, a.parallel, only, a.dry_run, a.out)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spkmod")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -246,25 +268,11 @@ def main(argv=None):
     if a.cmd == "sweep":
         _setup(a.verbose)
         from . import sweep as sw
-        only = a.only.split(",") if a.only else None
-        if a.shards or a.shard is not None or a.merge:
-            import json
-            ctx = sw.prepare(a.spec, only, a.out, quiet=a.shards)
-            if a.shards:
-                sh = sw.shards(ctx, a.max_jobs)
-                for s in sh:
-                    print(f"shard {s['shard']:2d} group {s['group']} {s['freqs'][0]:7.1f}-{s['freqs'][-1]:7.1f} Hz "
-                          f"{len(s['freqs']):3d} freqs cost {s['cost']:.0f}", file=sys.stderr)
-                print(json.dumps([s["shard"] for s in sh]))
-            elif a.shard is not None:
-                t = sw.solve_shard(ctx, a.shard, a.max_jobs)
-                print(f"shard {a.shard} solved in {t / 60:.1f} min")
-            else:
-                keys = sw.merge_shards(ctx)
-                print(f"merged {len(keys)} fields")
-                sw.tables(sw.prepare(a.spec, only, a.out, quiet=True))
-        else:
-            sw.run_sweep(a.spec, a.parallel, only, a.dry_run, a.out)
+        try:
+            _sweep_cmd(a, sw)
+        except sw.SweepIncomplete as exc:
+            print(f"ERROR: sweep incomplete: {exc}", file=sys.stderr)
+            raise SystemExit(2)
         return
     if a.cmd == "cad":
         from .cadgen import build

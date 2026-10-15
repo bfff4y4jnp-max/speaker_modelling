@@ -108,12 +108,24 @@ def _atomic_savez(path, **arrays):
     os.replace(tmp, path)
 
 
+_STEP_VOLATILE = None
+
+
 def _file_hash(path):
-    h = hashlib.sha1()
+    """Content hash. STEP files are hashed without their HEADER section (date stamp) and with the Open CASCADE
+    product-name counter normalised, so the same geometry written at another time or by another process
+    hashes the same."""
+    global _STEP_VOLATILE
     with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()[:16]
+        data = fh.read()
+    if path.lower().endswith((".step", ".stp")):
+        import re
+        if _STEP_VOLATILE is None:
+            _STEP_VOLATILE = (re.compile(rb"HEADER;.*?ENDSEC;", re.S),
+                              re.compile(rb"(Open CASCADE STEP translator [0-9.]+) [0-9]+"))
+        hdr, ctr = _STEP_VOLATILE
+        data = ctr.sub(rb"\1", hdr.sub(b"", data, count=1))
+    return hashlib.sha1(data).hexdigest()[:16]
 
 
 def _save_part(path, part):

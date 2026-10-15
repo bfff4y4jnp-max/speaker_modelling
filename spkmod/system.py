@@ -44,7 +44,8 @@ class SystemModel:
         return self.scenes[0].result.points
 
     def channel_responses(self):
-        """{channel: {'p': (nf,npts) Pa per volt, 'x'/'i': {body: per volt}, 'Z': input impedance}}.
+        """{channel: {'p': (nf,npts) Pa per volt, 'p_img': its ground-image part, 'center': source position,
+        'x'/'i': {body: per volt}, 'Z': input impedance}}.
 
         Scenes contribute only over their solved range (zero elsewhere);
         'covered' marks where every scene feeding the channel was solved.
@@ -58,14 +59,19 @@ class SystemModel:
             net = solve_network(r, sc.wiring, self.air)
             for ch, d in net.items():
                 p = d["p"].copy()
+                pim = np.zeros_like(p)               # ground-image part (scenes without a BEM ground)
                 if r.T_img is not None and not r.ground:
-                    p = p + self._ground_factor(r, sc.ground_sigma, r.freqs) * d["p_img"]
+                    pim = self._ground_factor(r, sc.ground_sigma, r.freqs) * d["p_img"]
+                    p = p + pim
                 if self.absorption:
-                    dist = np.linalg.norm(r.points - r.center, axis=1)
-                    p = p * np.exp(-np.outer(self.air.absorption(r.freqs), dist))
+                    a = np.exp(-np.outer(self.air.absorption(r.freqs), np.linalg.norm(r.points - r.center, axis=1)))
+                    p, pim = p * a, pim * a
                 o = out.setdefault(ch, {"p": np.zeros((nf, p.shape[1]), complex), "x": {}, "i": {},
-                                        "Y": np.zeros(nf, complex), "covered": np.ones(nf, bool)})
+                                        "p_img": np.zeros((nf, p.shape[1]), complex),
+                                        "Y": np.zeros(nf, complex), "covered": np.ones(nf, bool),
+                                        "center": np.asarray(r.center, float)})
                 o["p"][idx] += p
+                o["p_img"][idx] += pim
                 cov = np.zeros(nf, bool); cov[idx] = True
                 o["covered"] &= cov
                 for j, b in enumerate(r.body_names):
@@ -185,3 +191,38 @@ def listener_grid(x_range, y_range, spacing, heights=(1.4, 1.6, 1.8)):
 def log_freqs(fmin, fmax, per_octave=24):
     n = int(np.ceil(np.log2(fmax / fmin) * per_octave)) + 1
     return fmin * 2 ** (np.arange(n) / per_octave)
+
+
+# ----------------------------------------------------------------------------- crowd
+def path_length_in_box(src, pts, box):
+    """Length of the straight segments src -> pts inside the axis-aligned box (x0, x1, y0, y1, z0, z1)."""
+    src, pts = np.asarray(src, float), np.asarray(pts, float)
+    d = pts - src
+    lo = np.array(box[0::2], float)
+    hi = np.array(box[1::2], float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t1 = (lo - src) / d
+        t2 = (hi - src) / d
+    tmin = np.where(d == 0, np.where((src >= lo) & (src <= hi), -np.inf, np.inf), np.minimum(t1, t2))
+    tmax = np.where(d == 0, np.where((src >= lo) & (src <= hi), np.inf, -np.inf), np.maximum(t1, t2))
+    a = np.clip(tmin.max(1), 0, 1)
+    b = np.clip(tmax.min(1), 0, 1)
+    return np.maximum(b - a, 0) * np.linalg.norm(d, axis=1)
+
+
+def crowd_factors(f, center, pts, crowd, air=Air()):
+    """Excess attenuation through a crowd volume for the direct and the ground-image path (e^{+jwt}).
+
+    crowd: {box: [x0, x1, y0, y1], height: 1.7, sigma: flow resistivity Pa s/m^2}. The crowd is an
+    equivalent porous layer (Miki) crossed along straight rays from the source position; refraction and
+    scattering at its edges are ignored. Returns (A_direct, A_image), each (nf, npts).
+    """
+    from .air import miki
+    x0, x1, y0, y1 = crowd["box"]
+    box = (x0, x1, y0, y1, 0.0, float(crowd.get("height", 1.7)))
+    rho_e, c_e = miki(np.asarray(f, float), float(crowd["sigma"]), air)
+    w = 2 * np.pi * np.asarray(f, float)
+    dk = w / c_e - w / air.c                      # extra (complex) wavenumber inside the crowd
+    Ld = path_length_in_box(center, pts, box)
+    Li = path_length_in_box(np.asarray(center, float) * [1, 1, -1], pts, box)
+    return np.exp(-1j * np.outer(dk, Ld)), np.exp(-1j * np.outer(dk, Li))

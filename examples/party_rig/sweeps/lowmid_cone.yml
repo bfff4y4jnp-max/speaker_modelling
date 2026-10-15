@@ -1,0 +1,30 @@
+# Low-mid cone dish: the 3D model's pistons are flat discs, so the air in each 12-280-W cone (~1.5 L, ~3 L for
+# two) is missing from the front chamber (1D/Hornresp: ~7-9 L including the dishes; 3D flat: ~4-5 L). Recess
+# each piston by the mean dish depth (dish volume / Sd, about cone depth / 3) inside a basket ring, and compare.
+# Suspected cause of the 3D-only +2.5..3.8 dB at 250-280 Hz. Low-mid alone, in the stack scene position.
+# The recessed boxes are static STEPs (cad/lowmid_recess30/45.step, from make_specs.lowmid_spec(r) + spkmod cad):
+# a generator rebuilds the STEP on every runner and gmsh stamps the date into it, so the shards' cache keys did
+# not match at merge (first run lost both recess variants).
+#   spkmod sweep examples/party_rig/sweeps/lowmid_cone.yml --dry-run
+project: ../project.yml
+scenes: [stack]
+frequencies: {min: 70, max: 450, per_octave: 24}
+dsp: flat
+bands: sixth
+reference: flat
+variants:
+  - name: flat            # as built in project.yml: pistons at the baffle mid-thickness
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    project: {solver: {refine_gaps: true}}   # 8 mm front chamber, 5-10 mm basket gaps
+  - name: recess30        # 30 mm: ~1.5 L per cone (90 mm deep cone, estimated)
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    replace: {lowmid: {cabinet: lowmid_recess30}}
+    project:
+      solver: {refine_gaps: true}
+      cabinets: {lowmid_recess30: {step: cad/lowmid_recess30.step, pistons: [{name: drv_a, center: [0.2532, 0.178, 0.311], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2532, 0.498, 0.311], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}]}}
+  - name: recess45        # 45 mm: ~2.3 L per cone (upper bound)
+    remove: [sub_rear_l, sub_rear_r, sub_front_l, sub_front_r]
+    replace: {lowmid: {cabinet: lowmid_recess45}}
+    project:
+      solver: {refine_gaps: true}
+      cabinets: {lowmid_recess45: {step: cad/lowmid_recess45.step, pistons: [{name: drv_a, center: [0.2495, 0.178, 0.3255], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}, {name: drv_b, center: [0.2495, 0.498, 0.3255], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07]}]}}

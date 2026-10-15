@@ -146,7 +146,7 @@ def _generate_cabinet(name, gen, sweep_dir, out_dir, proj_dir):
             json.dump(pistons, fh)
     with open(pist_file) as fh:
         pistons = json.load(fh)
-    return {"step": os.path.abspath(step), "pistons": pistons, **extra}
+    return {"step": os.path.abspath(step), "pistons": pistons, "spec_hash": h, **extra}
 
 
 def apply_variant(cfg, v, scenes, sweep_dir, out_dir, proj_dir):
@@ -232,7 +232,9 @@ def _acoustic_signature(cfg, scenes, freqs, points):
         for it in cfg["scenes"][s]["items"]:
             c = cfg["cabinets"][it["cabinet"]]
             cabs[it["cabinet"]] = {k: v for k, v in c.items() if k != "step"}
-            cabs[it["cabinet"]]["step_hash"] = _file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"]) else c.get("step")
+            if "spec_hash" not in c:        # generated cabinets are keyed by their spec, not the STEP bytes
+                cabs[it["cabinet"]]["step_hash"] = (_file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"])
+                                                    else c.get("step"))
     sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma", "ground_reflection")} for s in scenes}
     return {"cabs": cabs, "scenes": sc, "solver": {k: v for k, v in (cfg.get("solver") or {}).items()
                                                  if k not in ("memory_gb", "cache_dir")},
@@ -273,21 +275,33 @@ def _solve_group(job):
                 results[s] = solve_scene(pr.cabinets(s), fs, points=points, directions=None, ground=ground,
                                          image_points=not ground, air=pr.air, settings=pr.scene_settings(s),
                                          center=sc.get("acoustic_center"))
+            if job.get("acoustic_out"):            # scene results before drivers (monte_carlo reuses them)
+                for s, r in results.items():
+                    path = job["acoustic_out"].format(scene=s)
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    r.save(path, compact=True)
         save_fields(pr.system(results), out_path)
     return {"key": job["key"], "time_s": time.time() - t0}
 
 
 def save_fields(sysm, path):
     from .scene import _atomic_savez
+    _atomic_savez(path, **fields_from_system(sysm))
+
+
+def fields_from_system(sysm):
+    """Per-channel fields (the fields/*.npz content) of a SystemModel, in memory."""
     ch = sysm.channel_responses()
     names = sorted(ch)
     bodies = [(c, b) for c in names for b in ch[c]["x"]]
-    _atomic_savez(path, freqs=sysm.freqs, points=sysm.points, channels=np.array(names),
-                  p=np.array([ch[c]["p"] for c in names]).astype(np.complex64),
-                  Z=np.array([ch[c]["Z"] for c in names]).astype(np.complex64),
-                  covered=np.array([ch[c]["covered"] for c in names]),
-                  body_channel=np.array([c for c, _ in bodies]), body_name=np.array([b for _, b in bodies]),
-                  x=np.array([ch[c]["x"][b] for c, b in bodies]).astype(np.complex64).reshape(len(bodies), -1))
+    return dict(freqs=sysm.freqs, points=sysm.points, channels=np.array(names),
+                p=np.array([ch[c]["p"] for c in names]).astype(np.complex64),
+                p_img=np.array([ch[c]["p_img"] for c in names]).astype(np.complex64),
+                center=np.array([ch[c]["center"] for c in names]).reshape(len(names), 3),
+                Z=np.array([ch[c]["Z"] for c in names]).astype(np.complex64),
+                covered=np.array([ch[c]["covered"] for c in names]),
+                body_channel=np.array([c for c, _ in bodies]), body_name=np.array([b for _, b in bodies]),
+                x=np.array([ch[c]["x"][b] for c, b in bodies]).astype(np.complex64).reshape(len(bodies), -1))
 
 
 def load_fields(path):
@@ -326,7 +340,20 @@ def channel_drive(pr, F, mode, off):
 def variant_response(pr, F, mode, off):
     drive = channel_drive(pr, F, mode, off)
     chans = list(map(str, F["channels"]))
-    p = sum(drive[c][:, None] * F["p"][i].astype(complex) for i, c in enumerate(chans))
+    crowd = off.get("crowd")
+    if crowd:
+        if "center" not in F:
+            raise ValueError("offline crowd needs fields written by spkmod >= brief-2 item 4: delete the sweep's "
+                             "fields/ and re-run")
+        from .system import crowd_factors
+        f = F["freqs"].astype(float)
+        p = 0
+        for i, c in enumerate(chans):
+            Ad, Ai = crowd_factors(f, F["center"][i], F["points"], crowd, pr.air)
+            pi = F["p_img"][i].astype(complex)
+            p = p + drive[c][:, None] * ((F["p"][i].astype(complex) - pi) * Ad + pi * Ai)
+    else:
+        p = sum(drive[c][:, None] * F["p"][i].astype(complex) for i, c in enumerate(chans))
     x = {}
     for j, (c, b) in enumerate(zip(map(str, F["body_channel"]), map(str, F["body_name"]))):
         x[b] = x.get(b, 0) + drive[c] * F["x"][j].astype(complex)
@@ -376,12 +403,17 @@ def prepare(path, only=None, out=None, quiet=False):
         akey = _key(acoustic)
         fkey = _key(_field_signature(cfg, scenes, acoustic))
         fpath = os.path.join(out_dir, "fields", f"{fkey}.npz")
+        v = dict(v, _akey=akey)
+        if v.get("monte_carlo"):
+            _check_mc(v["monte_carlo"], vname)
         plan.append((vname, v, cfg, fpath))
-        if not os.path.exists(fpath):
-            g = groups.setdefault(akey, {"key": akey, "fields": [], "variants": []})
+        need_ac = bool(v.get("monte_carlo")) and not os.path.exists(os.path.join(out_dir, "acoustic", akey, "done"))
+        if not os.path.exists(fpath) or need_ac:
+            g = groups.setdefault(akey, {"key": akey, "fields": [], "variants": [], "acoustic": False})
             if fpath not in [f[-1] for f in g["fields"]]:
                 g["fields"].append((cfg, proj_dir, scenes, freqs, points, fpath))
             g["variants"].append(vname)
+            g["acoustic"] = g["acoustic"] or need_ac
     ctx = dict(spec=spec, name=name, sweep_dir=sweep_dir, out_dir=out_dir, proj_dir=proj_dir, solver=solver,
                scenes=scenes, points=points, zones=zones, freqs=freqs, plan=plan, groups=groups, n_variants=len(variants),
                band_octaves=base_pr.settings.band_octaves, h_max=base_pr.settings.h_max,
@@ -409,7 +441,9 @@ def run_sweep(path, parallel=None, only=None, dry_run=False, out=None):
         cores = os.cpu_count() or 1
         env = {k: str(max(1, cores // n_par)) for k in ("NUMBA_NUM_THREADS", "OMP_NUM_THREADS",
                                                          "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "POCL_MAX_PTHREAD_COUNT")}
-        jobs = [dict(g, memory_gb=mem) for g in groups.values()]
+        jobs = [dict(g, memory_gb=mem,
+                     acoustic_out=(os.path.join(ctx["out_dir"], "acoustic", g["key"], "{scene}.npz") if g.get("acoustic")
+                                   else None)) for g in groups.values()]
         t0 = time.time()
         failed = []
         if n_par == 1:
@@ -447,6 +481,10 @@ def run_sweep(path, parallel=None, only=None, dry_run=False, out=None):
             for j, exc in failed:
                 print(f"  {', '.join(j['variants'])}: {exc!r}")
 
+    for g in groups.values():
+        d = os.path.join(ctx["out_dir"], "acoustic", g["key"])
+        if g.get("acoustic") and os.path.isdir(d):
+            open(os.path.join(d, "done"), "w").close()
     return tables(ctx)
 
 
@@ -464,6 +502,7 @@ def tables(ctx):
     ref_csv = os.path.join(sweep_dir, ref_csv) if ref_csv and not os.path.isabs(ref_csv) else ref_csv
     ref = spec.get("reference") or plan[0][0]
     bands = None
+    missing = [vname for vname, v, cfg, fpath in plan if not os.path.exists(fpath)]
     for vname, v, cfg, fpath in plan:
         if not os.path.exists(fpath):
             continue
@@ -472,13 +511,10 @@ def tables(ctx):
         bands = bands or parse_bands(spec.get("bands"), f)
         pr = Project(cfg=cfg, base_dir=proj_dir)
         p, x = variant_response(pr, F, mode, v.get("offline") or {})
-        vr = zone_table(f, p, zones, bands, smoothing)
-        for r in vr:
-            lo, hi = bands[r["band"]]
-            m = (f >= lo) & (f <= hi)
-            r["x_peak_mm"] = float(max((np.sqrt(2) * np.abs(xx[m]).max() * 1e3 for xx in x.values()), default=0.0))
-            r["variant"] = vname
+        vr = _rows(f, p, x, zones, bands, smoothing, vname)
         rows += vr
+        if v.get("monte_carlo"):
+            rows += monte_carlo_rows(ctx, vname, v, cfg, mode, zones, bands, smoothing)
         med = {z: 10 * np.log10(np.median(np.abs(p[:, idx]) ** 2, axis=1) / 4e-10) for z, idx in zones.items()}
         medians[vname] = med
         perfreq += [{"variant": vname, **r} for r in per_frequency(f, p, zones, smoothing)]
@@ -507,13 +543,117 @@ def tables(ctx):
               "ref_p90", "model_holes6_pct", "ref_holes6_pct", "model_holes3_pct", "ref_holes3_pct"]
         _write_csv(os.path.join(out_dir, "reference.csv"), refrows, rk)
         extra = "\n\n" + format_reference(refrows, os.path.basename(ref_csv))
+    if missing:
+        extra = (f"\n\n!! INCOMPLETE: no solved fields for {len(missing)} of {len(plan)} variants: "
+                 + ", ".join(missing) + extra)
     txt = (f"sweep {name}  (dsp: {mode}, reference: {ref}, levels dB SPL at 0 dBFS program, "
            f"spreads/holes at 1/{smoothing} oct)\n" + format_table(rows) + extra)
     with open(os.path.join(out_dir, "table.txt"), "w") as fh:
         fh.write(txt + "\n")
     print(txt)
     print(f"\nwritten: {os.path.join(out_dir, 'table.csv')}, table.txt, fields/, variants/")
+    if missing:
+        raise SweepIncomplete(f"no solved fields for {len(missing)} of {len(plan)} variants: {', '.join(missing)}")
     return rows
+
+
+class SweepIncomplete(RuntimeError):
+    """Some variants have no solved fields: the table was written without them."""
+
+
+# --------------------------------------------------------------------------- monte carlo
+_MC_OK = ("drivers.", "wiring.", "dsp.")
+MC_METRICS = ("median_db", "p10", "p90", "rms", "holes6_pct", "holes3_pct", "x_peak_mm")
+
+
+def _check_mc(mc, vname):
+    for path, d in (mc.get("vary") or {}).items():
+        parts = path.split(".")
+        ok = path.startswith(_MC_OK) or (parts[0] == "scenes" and len(parts) == 3
+                                         and parts[2] == "ground_sigma")
+        if not ok:
+            raise ValueError(f"variant {vname!r}: monte_carlo can only vary drivers.*, wiring.*, dsp.* and "
+                             f"scenes.<scene>.ground_sigma (offline inputs), not {path!r}")
+        if not ({"rel", "sd_rel", "sd", "range"} & set(d)):
+            raise ValueError(f"variant {vname!r}: monte_carlo vary {path!r} needs rel, sd_rel, sd or range")
+
+
+def _get_path(cfg, path):
+    d = cfg
+    for k in path.split("."):
+        d = d[k]
+    return d
+
+
+def mc_samples(mc, cfg):
+    """List of (dotted path -> value) dicts, Latin hypercube (default) or plain random."""
+    from scipy.stats import norm
+    vary = mc["vary"]
+    n = int(mc.get("n", 64))
+    rng = np.random.default_rng(mc.get("seed", 1))
+    keys = list(vary)
+    U = np.empty((n, len(keys)))
+    for j in range(len(keys)):
+        U[:, j] = ((rng.permutation(n) + rng.random(n)) / n) if mc.get("method", "lhs") == "lhs" else rng.random(n)
+    out = []
+    for i in range(n):
+        s = {}
+        for j, key in enumerate(keys):
+            d, u = vary[key], U[i, j]
+            if "range" in d:
+                lo, hi = d["range"]
+                s[key] = lo + (hi - lo) * u
+                continue
+            nom = float(_get_path(cfg, key))
+            if "rel" in d:
+                s[key] = nom * (1 + d["rel"] * (2 * u - 1))
+            elif "sd_rel" in d:
+                s[key] = nom * (1 + d["sd_rel"] * norm.ppf(u))
+            else:
+                s[key] = nom + d["sd"] * norm.ppf(u)
+        out.append(s)
+    return out
+
+
+def _rows(f, p, x, zones, bands, smoothing, vname):
+    from .metrics import zone_table
+    vr = zone_table(f, p, zones, bands, smoothing)
+    for r in vr:
+        lo, hi = bands[r["band"]]
+        m = (f >= lo) & (f <= hi)
+        r["x_peak_mm"] = float(max((np.sqrt(2) * np.abs(xx[m]).max() * 1e3 for xx in x.values()), default=0.0))
+        r["variant"] = vname
+    return vr
+
+
+def monte_carlo_rows(ctx, vname, v, cfg, mode, zones, bands, smoothing):
+    """p5 / p50 / p95 rows over offline-only perturbations, reusing the variant's stored scene results."""
+    from .project import Project
+    from .scene import SceneResult
+    mc = v["monte_carlo"]
+    d = os.path.join(ctx["out_dir"], "acoustic", v["_akey"])
+    results = {s: SceneResult.load(os.path.join(d, f"{s}.npz")) for s in ctx["scenes"]
+               if os.path.exists(os.path.join(d, f"{s}.npz"))}
+    if not results:
+        raise SweepIncomplete(f"variant {vname}: monte_carlo needs the stored scene results in {d}")
+    per = {}
+    for s in mc_samples(mc, cfg):
+        c = copy.deepcopy(cfg)
+        for path, val in s.items():
+            _set_path(c, path, val)
+        pr = Project(cfg=c, base_dir=ctx["proj_dir"])
+        F = fields_from_system(pr.system(results))
+        p, x = variant_response(pr, F, mode, v.get("offline") or {})
+        for r in _rows(F["freqs"].astype(float), p, x, zones, bands, smoothing, vname):
+            per.setdefault((r["zone"], r["band"]), []).append(r)
+    out = []
+    for q in (5, 50, 95):
+        for (z, b), rs in per.items():
+            row = {"variant": f"{vname}[p{q}]", "zone": z, "band": b, "n_freqs": rs[0]["n_freqs"]}
+            for k in MC_METRICS:
+                row[k] = float(np.percentile([r[k] for r in rs], q))
+            out.append(row)
+    return out
 
 
 # --------------------------------------------------------------------------- sharding (GitHub Actions, Slurm)
@@ -556,7 +696,8 @@ def solve_shard(ctx, i, max_jobs=20):
     fields = [(cfg, pd, sc, fq, pts, os.path.join(parts, os.path.basename(fpath)[:-4] + f"__{i}.npz"))
               for cfg, pd, sc, _, pts, fpath in g["fields"]]
     t0 = time.time()
-    _solve_group({"key": g["key"], "fields": fields, "variants": g["variants"]})
+    _solve_group({"key": g["key"], "fields": fields, "variants": g["variants"],
+                  "acoustic_out": os.path.join(parts, f"A{g['key']}__{{scene}}__{i}.npz") if g.get("acoustic") else None})
     return time.time() - t0
 
 
@@ -565,9 +706,20 @@ def merge_shards(ctx):
     from .scene import _atomic_savez
     parts = os.path.join(ctx["out_dir"], "parts")
     by_key = {}
+    acoustic = {}
     for fn in sorted(os.listdir(parts)) if os.path.isdir(parts) else []:
-        if fn.endswith(".npz") and "__" in fn:
+        if fn.endswith(".npz") and fn.startswith("A") and fn.count("__") == 2:
+            akey, scene, _ = fn[1:].split("__")
+            acoustic.setdefault((akey, scene), []).append(os.path.join(parts, fn))
+        elif fn.endswith(".npz") and "__" in fn:
             by_key.setdefault(fn.split("__")[0], []).append(load_fields(os.path.join(parts, fn)))
+    from .jobs import merge as merge_scene
+    for (akey, scene), paths in acoustic.items():
+        d = os.path.join(ctx["out_dir"], "acoustic", akey)
+        os.makedirs(d, exist_ok=True)
+        merge_scene(paths).save(os.path.join(d, f"{scene}.npz"), compact=True)
+    for akey in {a for a, _ in acoustic}:
+        open(os.path.join(ctx["out_dir"], "acoustic", akey, "done"), "w").close()
     for key, P in by_key.items():
         P.sort(key=lambda F: float(F["freqs"][0]))
         f = np.concatenate([F["freqs"] for F in P])
@@ -575,6 +727,8 @@ def merge_shards(ctx):
         bodies = sorted({(str(c), str(b)) for F in P for c, b in zip(F["body_channel"], F["body_name"])})
         npts = P[0]["points"].shape[0]
         p = np.zeros((len(chans), len(f), npts), np.complex64)
+        pim = np.zeros_like(p)
+        cen = np.zeros((len(chans), 3))
         Z = np.full((len(chans), len(f)), np.inf, np.complex64)
         cov = np.zeros((len(chans), len(f)), bool)
         x = np.zeros((len(bodies), len(f)), np.complex64)
@@ -584,11 +738,15 @@ def merge_shards(ctx):
             for j, c in enumerate(map(str, F["channels"])):
                 k = chans.index(c)
                 p[k, o:o + n], Z[k, o:o + n], cov[k, o:o + n] = F["p"][j], F["Z"][j], F["covered"][j]
+                if "p_img" in F:
+                    pim[k, o:o + n] = F["p_img"][j]
+                    cen[k] = F["center"][j]
             for j, cb in enumerate(zip(map(str, F["body_channel"]), map(str, F["body_name"]))):
                 x[bodies.index(cb), o:o + n] = F["x"][j]
             o += n
         _atomic_savez(os.path.join(ctx["out_dir"], "fields", f"{key}.npz"), freqs=f, points=P[0]["points"],
-                      channels=np.array(chans), p=p, Z=Z, covered=cov, body_channel=np.array([c for c, _ in bodies]),
+                      channels=np.array(chans), p=p, p_img=pim, center=cen, Z=Z, covered=cov,
+                      body_channel=np.array([c for c, _ in bodies]),
                       body_name=np.array([b for _, b in bodies]), x=x)
     return sorted(by_key)
 
