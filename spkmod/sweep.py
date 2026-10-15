@@ -296,6 +296,8 @@ def fields_from_system(sysm):
     bodies = [(c, b) for c in names for b in ch[c]["x"]]
     return dict(freqs=sysm.freqs, points=sysm.points, channels=np.array(names),
                 p=np.array([ch[c]["p"] for c in names]).astype(np.complex64),
+                p_img=np.array([ch[c]["p_img"] for c in names]).astype(np.complex64),
+                center=np.array([ch[c]["center"] for c in names]).reshape(len(names), 3),
                 Z=np.array([ch[c]["Z"] for c in names]).astype(np.complex64),
                 covered=np.array([ch[c]["covered"] for c in names]),
                 body_channel=np.array([c for c, _ in bodies]), body_name=np.array([b for _, b in bodies]),
@@ -338,7 +340,20 @@ def channel_drive(pr, F, mode, off):
 def variant_response(pr, F, mode, off):
     drive = channel_drive(pr, F, mode, off)
     chans = list(map(str, F["channels"]))
-    p = sum(drive[c][:, None] * F["p"][i].astype(complex) for i, c in enumerate(chans))
+    crowd = off.get("crowd")
+    if crowd:
+        if "center" not in F:
+            raise ValueError("offline crowd needs fields written by spkmod >= brief-2 item 4: delete the sweep's "
+                             "fields/ and re-run")
+        from .system import crowd_factors
+        f = F["freqs"].astype(float)
+        p = 0
+        for i, c in enumerate(chans):
+            Ad, Ai = crowd_factors(f, F["center"][i], F["points"], crowd, pr.air)
+            pi = F["p_img"][i].astype(complex)
+            p = p + drive[c][:, None] * ((F["p"][i].astype(complex) - pi) * Ad + pi * Ai)
+    else:
+        p = sum(drive[c][:, None] * F["p"][i].astype(complex) for i, c in enumerate(chans))
     x = {}
     for j, (c, b) in enumerate(zip(map(str, F["body_channel"]), map(str, F["body_name"]))):
         x[b] = x.get(b, 0) + drive[c] * F["x"][j].astype(complex)
@@ -712,6 +727,8 @@ def merge_shards(ctx):
         bodies = sorted({(str(c), str(b)) for F in P for c, b in zip(F["body_channel"], F["body_name"])})
         npts = P[0]["points"].shape[0]
         p = np.zeros((len(chans), len(f), npts), np.complex64)
+        pim = np.zeros_like(p)
+        cen = np.zeros((len(chans), 3))
         Z = np.full((len(chans), len(f)), np.inf, np.complex64)
         cov = np.zeros((len(chans), len(f)), bool)
         x = np.zeros((len(bodies), len(f)), np.complex64)
@@ -721,11 +738,15 @@ def merge_shards(ctx):
             for j, c in enumerate(map(str, F["channels"])):
                 k = chans.index(c)
                 p[k, o:o + n], Z[k, o:o + n], cov[k, o:o + n] = F["p"][j], F["Z"][j], F["covered"][j]
+                if "p_img" in F:
+                    pim[k, o:o + n] = F["p_img"][j]
+                    cen[k] = F["center"][j]
             for j, cb in enumerate(zip(map(str, F["body_channel"]), map(str, F["body_name"]))):
                 x[bodies.index(cb), o:o + n] = F["x"][j]
             o += n
         _atomic_savez(os.path.join(ctx["out_dir"], "fields", f"{key}.npz"), freqs=f, points=P[0]["points"],
-                      channels=np.array(chans), p=p, Z=Z, covered=cov, body_channel=np.array([c for c, _ in bodies]),
+                      channels=np.array(chans), p=p, p_img=pim, center=cen, Z=Z, covered=cov,
+                      body_channel=np.array([c for c, _ in bodies]),
                       body_name=np.array([b for _, b in bodies]), x=x)
     return sorted(by_key)
 

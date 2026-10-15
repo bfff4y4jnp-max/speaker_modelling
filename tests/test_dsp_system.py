@@ -52,3 +52,13 @@ def test_tabulated_ground_reflection():
     f = np.array([100.0, 500.0, 1414.2, 4000.0, 8000.0])
     Q = SystemModel()._ground_factor(r, [[500, 1.0], [4000, 0.5]], f)
     assert Q.shape == (5, 3) and np.allclose(Q[:, 0].real, [1.0, 1.0, 0.75, 0.5, 0.5], atol=1e-3)
+
+
+def test_path_length_in_box():
+    from spkmod.system import path_length_in_box
+    box = (0, 2, -1, 1, 0, 1)
+    pts = np.array([[3.0, 0, 0.5], [1.0, 0, 0.5], [-1.0, 0, 0.5], [3.0, 0, 3.0]])
+    L = path_length_in_box([-1.0, 0, 0.5], pts, box)
+    assert np.allclose(L, [2.0, 1.0, 0.0, 0.0], atol=1e-12)    # last ray passes above the box
+    # ray from above into the box: from (1,0,3) to (1,0,0.5) crosses 0.5 m of it
+    assert np.isclose(path_length_in_box([1.0, 0, 3.0], np.array([[1.0, 0, 0.5]]), box)[0], 0.5)

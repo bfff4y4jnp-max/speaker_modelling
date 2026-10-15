@@ -177,3 +177,25 @@ def test_monte_carlo_rejects_acoustic_inputs():
     from spkmod.sweep import _check_mc
     with pytest.raises(ValueError, match="offline inputs"):
         _check_mc({"vary": {"cabinets.sub.pistons": {"rel": 0.1}}}, "v")
+
+
+def test_offline_crowd_attenuates_more_at_high_frequency(tmp_path):
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    crowd = {"box": [1.0, 7.0, -3.0, 3.0], "height": 1.7, "sigma": 5000}
+    spec = {"project": "project.yml", "scenes": ["tops"], "frequencies": {"list": [150.0, 500.0]},
+            "listeners": {"points": [[4, 0, 1.6], [5, 1, 1.6], [5, -1, 1.4]]}, "dsp": "flat",
+            "bands": {"lo": [140, 160], "hi": [480, 520]},
+            "variants": [{"name": "empty"},
+                         {"name": "packed", "base": "empty", "offline": {"crowd": crowd}},
+                         {"name": "elsewhere", "base": "empty",
+                          "offline": {"crowd": dict(crowd, box=[20.0, 30.0, 20.0, 30.0])}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    ctx = sw.prepare(str(d / "sweep.yml"), out=str(d / "o"), quiet=True)
+    assert len(ctx["groups"]) == 1
+    rows = sw.run_sweep(str(d / "sweep.yml"), out=str(d / "o"))
+    g = lambda v, b: next(r["median_db"] for r in rows if r["variant"] == v and r["band"] == b and r["zone"] == "floor")
+    drop_lo, drop_hi = g("empty", "lo") - g("packed", "lo"), g("empty", "hi") - g("packed", "hi")
+    assert 0 < drop_lo < drop_hi
+    assert abs(g("elsewhere", "hi") - g("empty", "hi")) < 1e-9
