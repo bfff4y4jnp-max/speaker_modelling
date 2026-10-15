@@ -88,6 +88,14 @@ def cmd_report(pr, a):
     # floor
     if sysm.points is not None:
         p = sysm.response(tf, ch)
+        from .metrics import compare_to_reference, parse_bands, zone_table
+        pts_all, zones = pr.observation_points()
+        if pts_all is None or len(pts_all) != p.shape[1]:
+            zones = {"floor": np.arange(p.shape[1])}       # results solved before zones were added
+        p_all, pts_full = p, sysm.points
+        bands = parse_bands(None, f)
+        zrows = zone_table(f, p_all, zones, bands)
+        p = p_all[:, zones["floor"]]
         st = floor_stats(f, p)
         fig, ax = plt.subplots(figsize=(8, 4))
         Lp = spl(p)
@@ -95,9 +103,19 @@ def cmd_report(pr, a):
         ax.fill_between(f, np.percentile(Lp, 10, 1), np.percentile(Lp, 90, 1), alpha=.3, label="p10-p90")
         ax.set(xlabel="Hz", ylabel="dB SPL at 0 dBFS", title="Floor response (absolute)"); ax.grid(True, which="both", alpha=.3)
         ax.legend(); fig.tight_layout(); fig.savefig(os.path.join(a.out, "floor.png"), dpi=120); plt.close(fig)
-        lines += ["## Floor consistency", "", "| Band | p10 dB | p90 dB | dips >6 dB |", "|---|---|---|---|"]
-        lines += [f"| {k} | {v['p10']:+.1f} | {v['p90']:+.1f} | {v['dips_pct']:.1f}% |" for k, v in st["rows"].items()]
-        pts = sysm.points
+        lines += ["## Zones (levels dB SPL at 0 dBFS; spreads re zone median)", "",
+                  "| Zone | Band | Median | p10 | p90 | rms | holes >6 dB | >3 dB |", "|---|---|---|---|---|---|---|---|"]
+        lines += [f"| {r['zone']} | {r['band']} | {r['median_db']:.1f} | {r['p10']:+.1f} | {r['p90']:+.1f} | "
+                  f"{r['rms']:.2f} | {r['holes6_pct']:.1f}% | {r['holes3_pct']:.1f}% |" for r in zrows]
+        if getattr(a, "reference", None):
+            cmp_ = compare_to_reference(f, p, pts_full[zones["floor"]], a.reference, bands)
+            lines += ["", f"## Floor vs reference `{os.path.basename(a.reference)}` (aligned by {cmp_['offset_db']:+.1f} dB)", "",
+                      "| Band | dMedian | spot rms | model p10..p90 | ref p10..p90 | holes >6 dB model/ref |",
+                      "|---|---|---|---|---|---|"]
+            lines += [f"| {r['band']} | {r['d_median_db']:+.1f} | {r['spot_rms_db']:.2f} | {r['model_p10']:+.1f}..{r['model_p90']:+.1f} "
+                      f"| {r['ref_p10']:+.1f}..{r['ref_p90']:+.1f} | {r['model_holes6_pct']:.1f}/{r['ref_holes6_pct']:.1f}% |"
+                      for r in cmp_["rows"]]
+        pts = pts_full[zones["floor"]]
         z = np.unique(pts[:, 2])
         zc = z[np.argmin(np.abs(z - 1.6))]
         sel = np.isclose(pts[:, 2], zc)
@@ -110,6 +128,40 @@ def cmd_report(pr, a):
     with open(os.path.join(a.out, "summary.md"), "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print("report written to", a.out)
+
+
+def cmd_compare(a):
+    import csv
+    from .metrics import compare_to_reference, diff_rows, parse_bands
+    from .sweep import _safe, _write_csv, format_reference, load_variant
+    if a.a and a.b:
+        with open(os.path.join(a.sweep_dir, "table.csv")) as fh:
+            rows = list(csv.DictReader(fh))
+        ra = [r for r in rows if r["variant"] == a.a]
+        rb = [r for r in rows if r["variant"] == a.b]
+        if not ra or not rb:
+            raise SystemExit(f"variant not in table.csv: {a.a if not ra else a.b}")
+        d = diff_rows(ra, rb)
+        print(f"{a.b} minus {a.a}")
+        print(f"{'zone':10s} {'band':>9s} {'dMed':>6s} {'dp10':>6s} {'dp90':>6s} {'drms':>6s} {'d>6dB':>7s} {'d>3dB':>7s}")
+        for r in d:
+            print(f"{r['zone']:10s} {r['band']:>9s} {r['d_median_db']:+6.1f} {r['d_p10']:+6.1f} {r['d_p90']:+6.1f} "
+                  f"{r['d_rms']:+6.2f} {r['d_holes6_pct']:+6.1f}% {r['d_holes3_pct']:+6.1f}%")
+        if a.out:
+            _write_csv(a.out, d, list(d[0]) if d else [])
+    elif a.variant and a.reference:
+        v = load_variant(os.path.join(a.sweep_dir, "variants", f"{_safe(a.variant)}.npz"))
+        idx = v["zones"][a.zone]
+        f = v["freqs"]
+        res = compare_to_reference(f, v["p"][:, idx], v["points"][idx], a.reference, parse_bands(None, f))
+        rows = [{"variant": a.variant, "offset_db": res["offset_db"], **r} for r in res["rows"]]
+        print(format_reference(rows, os.path.basename(a.reference)))
+        if a.out:
+            _write_csv(a.out, rows, list(rows[0]) if rows else [])
+    else:
+        raise SystemExit("give --a and --b, or --variant and --reference")
+
+
 
 
 def main(argv=None):
@@ -132,13 +184,25 @@ def main(argv=None):
         if name == "report":
             p.add_argument("--out", default="report")
             p.add_argument("--preset")
+            p.add_argument("--reference", help="floor-model CSV (x,y,z + sixth-octave levels) to compare the floor with")
     ps = sub.add_parser("sweep", help="many variants of a project -> one comparison table")
     ps.add_argument("spec")
     ps.add_argument("--parallel", type=int, help="solves at once (memory and cores are split)")
     ps.add_argument("--only", help="comma-separated variant names")
     ps.add_argument("--dry-run", action="store_true", help="list variants and the solves needed")
     ps.add_argument("-v", "--verbose", action="store_true")
+    pc2 = sub.add_parser("compare", help="difference tables: two sweep variants, or a variant vs a reference CSV")
+    pc2.add_argument("sweep_dir", help="sweep output directory (with table.csv and variants/)")
+    pc2.add_argument("--a", help="variant A (difference = B - A)")
+    pc2.add_argument("--b", help="variant B")
+    pc2.add_argument("--variant", help="variant to compare with --reference")
+    pc2.add_argument("--reference", help="floor-model CSV")
+    pc2.add_argument("--zone", default="floor")
+    pc2.add_argument("--out", help="write the table as CSV")
     a = ap.parse_args(argv)
+    if a.cmd == "compare":
+        cmd_compare(a)
+        return
     if a.cmd == "sweep":
         _setup(a.verbose)
         from .sweep import run_sweep

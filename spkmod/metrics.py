@@ -118,3 +118,125 @@ def format_table(rows, keys=("median_db", "p10", "p90", "holes6_pct", "holes3_pc
                 line += f" {r['x_peak_mm']:7.2f}"
             lines.append(line)
     return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------- per frequency
+def per_frequency(f, p, zones, smoothing=6):
+    """Rows [{zone, freq, median_db, p10, p90}]: zone median level (dB SPL) and the tonal spread
+    (1/n-octave smoothed, each spot normalised to its own overall level) at every analysis frequency."""
+    P2 = np.abs(p) ** 2 + 1e-30
+    rows = []
+    for z, idx in zones.items():
+        Ls = 10 * np.log10(smooth(f, P2[:, idx], smoothing))
+        T = Ls - 10 * np.log10(P2[:, idx].mean(0))[None]
+        dev = T - np.median(T, axis=1, keepdims=True)
+        med = 10 * np.log10(np.median(P2[:, idx], axis=1) / P_REF2)
+        p10, p90 = np.percentile(dev, 10, axis=1), np.percentile(dev, 90, axis=1)
+        rows += [{"zone": z, "freq": float(fi), "median_db": float(m), "p10": float(a), "p90": float(b)}
+                 for fi, m, a, b in zip(f, med, p10, p90)]
+    return rows
+
+
+# ----------------------------------------------------------------------------- band-level data
+def octave_band_levels(f, p, centres, n=6):
+    """Power-average level (dB SPL) of each spot in 1/n-octave bands at `centres`: (nbands, nspots).
+    Bands without an analysis frequency are NaN."""
+    P2 = np.abs(p) ** 2 + 1e-30
+    out = np.full((len(centres), p.shape[1]), np.nan)
+    for i, c in enumerate(centres):
+        m = (f >= c * 2 ** (-0.5 / n)) & (f < c * 2 ** (0.5 / n))
+        if m.any():
+            out[i] = 10 * np.log10(P2[m].mean(0) / P_REF2)
+    return out
+
+
+def band_metrics_from_levels(centres, L, bands):
+    """Same metrics as band_metrics, from fractional-octave band levels L (nbands, nspots) in dB
+    (e.g. the floor model's sixth-octave table). Holes use the band data's own resolution."""
+    ok = ~np.isnan(L).any(1)
+    c, L = np.asarray(centres)[ok], L[ok]
+    in_any = np.zeros(len(c), bool)
+    for lo, hi in bands.values():
+        in_any |= (c >= lo) & (c <= hi)
+    lin = 10 ** (L / 10)
+    spot = 10 * np.log10(lin[in_any].mean(0))
+    T = L - spot[None]
+    dev = T - np.median(T, axis=1, keepdims=True)
+    out = {}
+    for name, (lo, hi) in bands.items():
+        m = (c >= lo) & (c <= hi)
+        if not m.any():
+            continue
+        band_lvl = 10 * np.log10(lin[m].mean(0))
+        d = dev[m].ravel()
+        below = band_lvl[None] - L[m]
+        out[name] = {"median_db": float(np.median(band_lvl)), "p10": float(np.percentile(d, 10)),
+                     "p90": float(np.percentile(d, 90)), "rms": float(np.sqrt(np.mean(d ** 2))),
+                     "holes6_pct": float(100 * (below > 6).any(0).mean()),
+                     "holes3_pct": float(100 * (below > 3).any(0).mean()), "n_freqs": int(m.sum())}
+    return out
+
+
+def load_reference_csv(path):
+    """Floor-model table: '#' comments, header x_m,y_m,z_m,<band centres...>, one row per spot.
+    Returns (points (n,3), centres (nb,), levels (nb, n) in dB re arbitrary)."""
+    import csv
+    with open(path) as fh:
+        rows = [r for r in csv.reader(line for line in fh if not line.startswith("#")) if r]
+    head = rows[0]
+    data = np.array([[float(x) for x in r] for r in rows[1:]])
+    return data[:, :3], np.array([float(h) for h in head[3:]]), data[:, 3:].T
+
+
+def match_points(points, ref_points, tol=1e-3):
+    """Index into `points` for every reference point (raises if any is unmatched)."""
+    d = np.linalg.norm(points[None, :, :] - ref_points[:, None, :], axis=-1)
+    idx = d.argmin(1)
+    bad = d[np.arange(len(ref_points)), idx] > tol
+    if bad.any():
+        raise ValueError(f"{int(bad.sum())} reference spots have no model point within {tol} m "
+                         f"(first: {ref_points[bad][0]})")
+    return idx
+
+
+def compare_to_reference(f, p, points, ref_csv, bands, n=6):
+    """Model vs reference table, per band, on the reference's own sixth-octave resolution.
+
+    The reference level is arbitrary, so model and reference are aligned by their median
+    difference over all spots and bands first ('offset_db'). Rows: band, model/ref metrics,
+    d_median_db (after alignment) and spot_rms_db (rms over spots of the tonal difference).
+    """
+    rp, centres, Lref = load_reference_csv(ref_csv)
+    idx = match_points(points, rp)
+    Lm = octave_band_levels(f, p[:, idx], centres, n)
+    ok = ~np.isnan(Lm).any(1)
+    offset = float(np.median(Lm[ok] - Lref[ok]))
+    Lr = Lref + offset
+    mm = band_metrics_from_levels(centres, np.where(ok[:, None], Lm, np.nan), bands)
+    rr = band_metrics_from_levels(centres[ok], Lr[ok], bands)
+    sm = Lm[ok] - 10 * np.log10((10 ** (Lm[ok] / 10)).mean(0))[None]
+    sr = Lr[ok] - 10 * np.log10((10 ** (Lr[ok] / 10)).mean(0))[None]
+    c = centres[ok]
+    rows = []
+    for b in mm:
+        if b not in rr:
+            continue
+        m = (c >= bands[b][0]) & (c <= bands[b][1])
+        rows.append({"band": b, **{f"model_{k}": v for k, v in mm[b].items() if k != "n_freqs"},
+                     **{f"ref_{k}": v for k, v in rr[b].items() if k != "n_freqs"},
+                     "d_median_db": mm[b]["median_db"] - rr[b]["median_db"],
+                     "spot_rms_db": float(np.sqrt(np.mean((sm[m] - sr[m]) ** 2)))})
+    return {"offset_db": offset, "n_spots": len(idx), "rows": rows}
+
+
+def diff_rows(rows_a, rows_b, keys=("median_db", "p10", "p90", "rms", "holes6_pct", "holes3_pct")):
+    """Difference table b - a for rows matched on (zone, band)."""
+    A = {(r["zone"], r["band"]): r for r in rows_a}
+    out = []
+    for r in rows_b:
+        a = A.get((r["zone"], r["band"]))
+        if a is None:
+            continue
+        out.append({"zone": r["zone"], "band": r["band"],
+                    **{f"d_{k}": float(r[k]) - float(a[k]) for k in keys if k in r and k in a}})
+    return out

@@ -58,6 +58,14 @@ Output in `sweeps/<name>/`:
 
 Sweeps solve with `solver.interior: reuse` by default. Each cabinet's interior FEM is solved once in its own frame, reduced to its openings and cached, so identical boxes and new layouts only redo the outside BEM. Against the full coupled solve it agrees to within 0.05 dB in driven SPL (`tests/test_reduced.py`). Set `interior: full` to force the full solve.
 
+Comparisons:
+```bash
+spkmod compare sweeps/sub_layouts --a m2m --b line4                 # difference table B - A per zone and band
+spkmod compare sweeps/sub_layouts --variant m2m --reference examples/party_rig/floor_model_deep30_x80.csv
+spkmod report project.yml --reference floor_model_deep30_x80.csv    # zones table + floor vs floor model
+```
+A sweep with `reference_csv:` also writes `reference.csv`, and every sweep writes `perfreq.csv` (zone median and spread at each frequency). The reference is aligned by its median offset, because the floor model's level is arbitrary, and is compared at its own sixth-octave resolution.
+
 Zones come from the project's `zones:`, the sweep's `zones:` and the listener set (`floor`). The metric definitions are in `spkmod/metrics.py`.
 
 Python API:
