@@ -129,7 +129,7 @@ def lowmid_spec(recess_mm=0.0, out=None):
     c2 = a + 222 * t - 9 * nd                                # 222 mm along the slope, baffle mid-thickness
     ax = vec([nd[0], 0, nd[1]])
     yc = [Wx / 2 - 160, Wx / 2 + 160]
-    L = ["name: lowmid", "units: mm",
+    L = ["name: lowmid" + ("" if not recess_mm else "_recess%g" % float(recess_mm)), "units: mm",
          "# Low-mid folded front horn, 2 x 12-280-W, straight-cut 18 mm ply build (Low-Mid Ground Horn page,",
          "#   outdoor_lowmid/build_section.py). External 496 deep x 676 wide x 468 high.",
          "# orientation: as used, standing on the ground. x = forward, rear panel at x = 0, mouth at x = 496;",
