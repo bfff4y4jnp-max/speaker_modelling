@@ -1,0 +1,22 @@
+# GENERIC example only (not fold3_35): a 3-pass folded tapped horn, straight-cut 18 mm ply.
+# Side view in x-z, width along y. Mouth = open top channel at x = 1200.
+name: generic_tapped_horn
+units: mm
+parts:
+  - {type: box, name: bottom,   at: [0, 0, 0],      size: [1200, 500, 18]}
+  - {type: box, name: top,      at: [0, 0, 532],    size: [1200, 500, 18]}
+  - {type: box, name: side_l,   at: [0, 0, 0],      size: [1200, 18, 550]}
+  - {type: box, name: side_r,   at: [0, 482, 0],    size: [1200, 18, 550]}
+  - {type: box, name: back,     at: [0, 0, 0],      size: [18, 500, 550]}
+  - {type: box, name: divider1, at: [18, 18, 180],  size: [982, 464, 18]}    # driver baffle
+  - {type: box, name: divider2, at: [200, 18, 360], size: [1000, 464, 18]}
+  - {type: box, name: front_lo, at: [1182, 18, 18], size: [18, 464, 342]}    # closes lower passes at the front
+  - type: prism                                                              # 45-degree reflector in the first fold
+    name: reflector
+    plane: xz
+    points: [[1182, 18], [1182, 120], [1080, 18]]
+    extrude: [18, 482]
+cutouts:
+  - {type: cylinder, name: drv_hole, center: [600, 250, 189], axis: [0, 0, 1], diameter: 282, depth: 40}
+pistons:
+  - {name: drv, center: [600, 250, 189], axis: [0, 0, 1], sd_cm2: 522, cutout: 282, thickness: 8, motor: [170, 100]}

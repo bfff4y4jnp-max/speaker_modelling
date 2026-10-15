@@ -31,6 +31,9 @@ spkmod solve  examples/demo/project.yml                  # cached in .spkmod_cac
 spkmod report examples/demo/project.yml --out report     # impedance, excursion, polars, floor stats, coverage
 ```
 
+Handover for the design project (creating cabinet specs without CAD software): `docs/HANDOVER.md`.
+`spkmod cad spec.yml` turns a panel-list YAML into STEP plus a preview PNG.
+
 The party-rig template is `examples/party_rig/project.yml`. Fill in its TODOs
 (STEP files, driver data, layout, CamillaDSP config).
 

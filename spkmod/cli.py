@@ -115,6 +115,9 @@ def cmd_report(pr, a):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="spkmod")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    pc = sub.add_parser("cad", help="panel-list YAML (mm) -> STEP + preview PNG + pistons snippet")
+    pc.add_argument("spec", nargs="+")
+    pc.add_argument("--out", help="output directory (default: next to the spec)")
     for name in ("mesh", "solve", "report"):
         p = sub.add_parser(name)
         p.add_argument("project")
@@ -130,6 +133,11 @@ def main(argv=None):
             p.add_argument("--out", default="report")
             p.add_argument("--preset")
     a = ap.parse_args(argv)
+    if a.cmd == "cad":
+        from .cadgen import build
+        for spec in a.spec:
+            build(spec, a.out)
+        return
     _setup(a.verbose)
     from .project import Project
     pr = Project(a.project)
