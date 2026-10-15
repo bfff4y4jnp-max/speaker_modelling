@@ -39,7 +39,8 @@ sweep.yml (paths relative to the sweep file):
 
 Outputs in `out`: table.csv, table.txt, fields/<key>.npz (per-channel pressure per volt, excursion per
 volt, impedance) and variants/<variant>.npz (per-frequency zone medians, total pressure).
-Solves are cached in the project's cache_dir by content, and each band group is saved as it finishes,
+Sweeps default to solver.interior: reuse (each cabinet's interior solved once; set `full` in the
+project or a variant's `project:` to force the coupled solve). Solves are cached in the project's cache_dir by content, and each band group is saved as it finishes,
 so an interrupted sweep resumes where it stopped.
 """
 from __future__ import annotations
@@ -235,7 +236,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
             c = cfg["cabinets"][it["cabinet"]]
             cabs[it["cabinet"]] = {k: v for k, v in c.items() if k != "step"}
             cabs[it["cabinet"]]["step_hash"] = _file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"]) else c.get("step")
-    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma",)} for s in scenes}
+    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma", "ground_reflection")} for s in scenes}
     return {"cabs": cabs, "scenes": sc, "solver": {k: v for k, v in (cfg.get("solver") or {}).items()
                                                  if k not in ("memory_gb", "cache_dir")},
             "air": cfg.get("air"), "freqs": np.round(freqs, 4).tolist(), "points": np.round(points, 5).tolist()}
@@ -243,7 +244,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
 
 def _field_signature(cfg, scenes, acoustic):
     return {"a": acoustic, "wiring": {s: (cfg.get("wiring") or {}).get(s) for s in scenes},
-            "drivers": cfg.get("drivers"), "ground": {s: cfg["scenes"][s].get("ground_sigma") for s in scenes}}
+            "drivers": cfg.get("drivers"), "ground": {s: [cfg["scenes"][s].get("ground_sigma"), cfg["scenes"][s].get("ground_reflection")] for s in scenes}}
 
 
 def _solve_group(job):
@@ -353,6 +354,7 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
         if c.get("step") and not os.path.isabs(c["step"]):
             c["step"] = os.path.join(proj_dir, c["step"])
     solver = base_cfg.setdefault("solver", {})
+    solver.setdefault("interior", "reuse")      # layouts change between variants: solve each cabinet's interior once
     solver["cache_dir"] = os.path.join(proj_dir, solver.get("cache_dir") or ".spkmod_cache")
     if spec.get("frequencies"):
         base_cfg["frequencies"] = spec["frequencies"]

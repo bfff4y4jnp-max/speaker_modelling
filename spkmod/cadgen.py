@@ -69,6 +69,8 @@ def build_spec(spec, out_dir, base_dir=".", preview=True, name=None, quiet=False
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
+        # gmsh options outlive initialize/finalize: the mesher sets metres, specs are in mm
+        gmsh.option.setString("Geometry.OCCTargetUnit", "MM")
         occ = gmsh.model.occ
         solids = []
         for p in spec["parts"]:
