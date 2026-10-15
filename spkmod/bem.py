@@ -52,6 +52,22 @@ def device():
     return _DEVICE
 
 
+def _with_fallback(make):
+    """Build and assemble an operator; if the OpenCL kernel cannot be compiled on this CPU (e.g. pocl's
+    LLVM does not know a new CPU model), switch to numba for the rest of the process and retry."""
+    global _DEVICE
+    try:
+        return _dense(make(device()))
+    except Exception as exc:
+        if device() != "opencl":
+            raise
+        import logging
+        logging.getLogger("spkmod").warning("OpenCL BEM kernels failed on this CPU (%s); using numba instead",
+                                            str(exc).strip().splitlines()[-1][:120])
+        _DEVICE = "numba"
+        return _dense(make("numba"))
+
+
 def _dense(op):
     a = _bempp().as_matrix(op.weak_form())
     return np.asarray(a.toarray() if hasattr(a, "toarray") else a)
@@ -166,22 +182,26 @@ class ExteriorBEM:
         return self._fold(Au, Bu)
 
     def _assemble_union(self, k):
+        """Rows of the original (folded) unknowns of k*BM operator A and k*B, built one operator at a time
+        (peak about two dense N x N arrays; the mass matrices stay sparse)."""
         from bempp_cl.api.operators.boundary import helmholtz as H, sparse
         P1, D0 = self.P1, self.D0
         if self._M11 is None:
-            self._M11 = _dense(sparse.identity(P1, P1, P1))
-            self._M10 = _dense(sparse.identity(D0, P1, P1))
-        d = device()
-        K = _dense(H.double_layer(P1, P1, P1, k, device_interface=d))
-        W = _dense(H.hypersingular(P1, P1, P1, k, device_interface=d))
-        V = _dense(H.single_layer(D0, P1, P1, k, device_interface=d))
-        Kp = _dense(H.adjoint_double_layer(D0, P1, P1, k, device_interface=d))
-        # k * (1/2 M - K + (i/k) W)  and  k * (-V - (i/k)(1/2 M + K'))
-        A = k * (0.5 * self._M11 - K) + 1j * W
-        B = -k * V - 1j * (0.5 * self._M10 + Kp)
+            self._M11 = sp.coo_matrix(_bempp().as_matrix(sparse.identity(P1, P1, P1).weak_form()))
+            self._M10 = sp.coo_matrix(_bempp().as_matrix(sparse.identity(D0, P1, P1).weak_form()))
         pr, pd = self._p1_perm, self._d0_perm
         rows = pr[: self.n]
-        return A[np.ix_(rows, pr)], B[np.ix_(rows, pd)]
+        # k * (1/2 M - K + (i/k) W)  and  k * (-V - (i/k)(1/2 M + K'))
+        A = _with_fallback(lambda d: H.double_layer(P1, P1, P1, k, device_interface=d))
+        A *= -k
+        A += 1j * _with_fallback(lambda d: H.hypersingular(P1, P1, P1, k, device_interface=d))
+        np.add.at(A, (self._M11.row, self._M11.col), 0.5 * k * self._M11.data)
+        A = A[np.ix_(rows, pr)]
+        B = _with_fallback(lambda d: H.single_layer(D0, P1, P1, k, device_interface=d))
+        B *= -k
+        B -= 1j * _with_fallback(lambda d: H.adjoint_double_layer(D0, P1, P1, k, device_interface=d))
+        np.add.at(B, (self._M10.row, self._M10.col), -0.5j * self._M10.data)
+        return A, B[np.ix_(rows, pd)]
 
     def _fold(self, Au, Bu):
         return np.asarray(Au @ self.F), np.asarray(Bu @ self.Fe)
@@ -196,12 +216,7 @@ class ExteriorBEM:
         if n_nodes is None:
             n_nodes = int(np.clip(np.ceil((kmax - kmin) * D / 4) + 3, 3, 9))
         if ks_needed is not None and 0 < len(ks_needed) <= n_nodes:
-            ks = np.unique(np.asarray(ks_needed, float))
-            data = []
-            for k in ks:
-                Au, Bu = self._assemble_union(k)
-                data.append((Au * np.exp(-1j * k * self._R11), Bu * np.exp(-1j * k * self._R10)))
-            return _Band(self, ks, data)
+            return _Direct(self)          # assemble each frequency when asked: nothing stored
         if kmax - kmin < 1e-9 or n_nodes <= 1:
             n_nodes = 1
             ks = np.array([0.5 * (kmin + kmax)])
@@ -211,7 +226,10 @@ class ExteriorBEM:
         data = []
         for k in ks:
             Au, Bu = self._assemble_union(k)
-            data.append((Au * np.exp(-1j * k * self._R11), Bu * np.exp(-1j * k * self._R10)))
+            # stored in single precision: halves memory, ~1e-7 relative (interpolation itself is ~1e-8)
+            data.append(((Au * np.exp(-1j * k * self._R11)).astype(np.complex64),
+                         (Bu * np.exp(-1j * k * self._R10)).astype(np.complex64)))
+            del Au, Bu
         return _Band(self, ks, data)
 
     # -------------------------------------------------------------- field
@@ -259,6 +277,20 @@ class ExteriorBEM:
         return Dm, Sm
 
 
+class _Direct:
+    """Direct assembly at the requested wavenumber (few frequencies per band: cheaper than interpolation)."""
+
+    def __init__(self, bem):
+        self.bem = bem
+
+    def matrices(self, k):
+        return self.bem._fold(*self.bem._assemble_union(k))
+
+    def solve(self, k):
+        A, B = self.matrices(k)
+        return sla.lu_solve(sla.lu_factor(A, overwrite_a=True, check_finite=False), B, check_finite=False)
+
+
 class _Band:
     """Frequency-interpolated folded BEM matrices over one band."""
 
@@ -272,8 +304,8 @@ class _Band:
         else:
             L = [np.prod([(k - ks[j]) / (ks[i] - ks[j]) for j in range(len(ks)) if j != i]) for i in range(len(ks))]
         b = self.bem
-        Au = sum(l * d[0] for l, d in zip(L, self.data)) * np.exp(1j * k * b._R11)
-        Bu = sum(l * d[1] for l, d in zip(L, self.data)) * np.exp(1j * k * b._R10)
+        Au = sum(l * d[0].astype(complex) for l, d in zip(L, self.data)) * np.exp(1j * k * b._R11)
+        Bu = sum(l * d[1].astype(complex) for l, d in zip(L, self.data)) * np.exp(1j * k * b._R10)
         return b._fold(Au, Bu)
 
     def solve(self, k):
@@ -285,8 +317,8 @@ class _Band:
 def memory_estimate(n_orig, n_union, n_active_union, n_nodes):
     """Approximate peak bytes for one band."""
     c = 16
-    assembly = c * (4 * n_union ** 2 + 2 * n_union * n_active_union)
-    stored = c * n_nodes * n_orig * (n_union + n_active_union)
+    assembly = c * (2 * n_union ** 2 + 2 * n_union * n_active_union)
+    stored = 8 * n_nodes * n_orig * (n_union + n_active_union)        # complex64 interpolation data
     return assembly + stored
 
 
