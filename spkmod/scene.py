@@ -45,6 +45,7 @@ class SolverSettings:
     memory_gb: Optional[float] = None        # budget; default 60 % of available
     piston_divisions: int = 16
     cache_dir: Optional[str] = ".spkmod_cache"
+    refine_gaps: bool = False                # mesh air gaps narrower than h/3 finer (they are always reported)
     interior: str = "full"                   # "full": one coupled FEM-BEM per scene; "reuse": each cabinet's
                                              # interior FEM solved once in its own frame (fast layout changes)
 
@@ -183,7 +184,7 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
             continue
         for attempt in range(4):
             mesh = build_scene_mesh(cabinets, h, settings.h_min, ground=ground,
-                                    piston_divisions=settings.piston_divisions)
+                                    piston_divisions=settings.piston_divisions, refine_gaps=settings.refine_gaps)
             n_act = int(((mesh.bem_kind == KIND_APERTURE) | (mesh.bem_kind == KIND_BODY)).sum())
             mult = 2 if ground else 1
             n_nodes_bem = len(np.unique(mesh.bem_tris))

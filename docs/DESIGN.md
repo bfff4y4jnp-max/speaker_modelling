@@ -149,6 +149,7 @@ What still limits real-world accuracy, roughly in order:
   * optional motor diameter and depth, which displaces air in rear chambers and horn paths.
 * Units are read from the STEP file (mm is typical) and converted to metres.
 * By default the envelope is the bounding box of the solids. The FEM fills everything inside it that isn't solid, and the outer faces of that air become the mouths and ports automatically. For very non-box shapes you may give an explicit `envelope` box.
+* **Mesher help.** Air gaps narrower than h/3 between facing CAD walls are listed in a warning with their position, and `solver.refine_gaps: true` meshes them finer. If gmsh fails, spkmod finds the piston whose parts (disc, frame ring, motor) make the geometry unmeshable, usually an edge or face that almost touches a CAD face. It then nudges that driver up to ±3 mm along its axis and logs the move. If that doesn't work, it raises `MeshError` naming the piston and the part. A frame ring is skipped when `cutout` equals the piston diameter.
 * Check before solving with `spkmod mesh project.yml --scene stack --out stack.vtk` (open it in ParaView). `kind` 0 = rigid, 1 = aperture, 2 = vibrating.
 
 ## 7. Using it for the party rig
