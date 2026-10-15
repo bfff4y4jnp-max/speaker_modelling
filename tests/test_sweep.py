@@ -106,3 +106,40 @@ def test_sharded_sweep_matches_single_run(tmp_path):
     for a, b in zip(single, sharded):
         assert abs(a["median_db"] - b["median_db"]) < 1e-3 and abs(a["p90"] - b["p90"]) < 1e-3
     assert sw.shards(sw.prepare(str(d / "sweep.yml"), out=str(d / "sharded"), quiet=True)) == []   # nothing left to solve
+
+
+def test_generated_cabinet_survives_sharding_on_fresh_runners(tmp_path):
+    """Each 'runner' regenerates the cabinet STEP (new date stamp, new OCC counter): keys must not change."""
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    (d / "gen.py").write_text(GEN)
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": [40.0, 60.0]},
+            "listeners": {"points": [[3, 0, 1.6], [4, 1, 1.6]]}, "bands": {"35-65": [35, 65]},
+            "variants": [{"name": "base"},
+                         {"name": "gen", "cabinets": {"sub": {"generator": "gen.py:box", "params": {"w": 0.45}}}}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    out = d / "runs" / "s"
+
+    def fresh_runner():
+        shutil.rmtree(out / "cad", ignore_errors=True)        # a new runner has no generated STEP yet
+        return sw.prepare(str(d / "sweep.yml"), out=str(out), quiet=True)
+
+    shards = sw.shards(fresh_runner())
+    for s in shards:
+        sw.solve_shard(fresh_runner(), s["shard"])
+    sw.merge_shards(fresh_runner())
+    rows = sw.tables(fresh_runner())
+    assert {r["variant"] for r in rows} == {"base", "gen"}
+
+
+def test_incomplete_sweep_fails_loudly(tmp_path):
+    from spkmod import sweep as sw
+    d = tmp_path / "demo"
+    shutil.copytree(DEMO, d, ignore=shutil.ignore_patterns("report", ".spkmod_cache"))
+    spec = {"project": "project.yml", "scenes": ["bass"], "frequencies": {"list": [40.0]},
+            "listeners": {"points": [[3, 0, 1.6]]}, "variants": [{"name": "a"}]}
+    (d / "sweep.yml").write_text(yaml.safe_dump(spec))
+    with pytest.raises(sw.SweepIncomplete, match="1 of 1 variants: a"):
+        sw.tables(sw.prepare(str(d / "sweep.yml"), out=str(tmp_path / "o"), quiet=True))
+    assert "INCOMPLETE" in (tmp_path / "o" / "table.txt").read_text()
