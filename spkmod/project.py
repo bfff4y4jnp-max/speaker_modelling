@@ -131,7 +131,9 @@ class Project:
         """SystemModel from {scene: SceneResult} (results must share frequencies)."""
         m = SystemModel(air=self.air)
         for name, res in results.items():
-            m.add_scene(name, res, self.wiring(name), self.cfg["scenes"][name].get("ground_sigma", np.inf))
+            sc = self.cfg["scenes"][name]
+            g = sc.get("ground_reflection", sc.get("ground_sigma", np.inf))    # |R|(f) table or flow resistivity
+            m.add_scene(name, res, self.wiring(name), g)
         return m
 
     def channel_tf(self, freqs, preset=None):

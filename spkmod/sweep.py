@@ -235,7 +235,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
             c = cfg["cabinets"][it["cabinet"]]
             cabs[it["cabinet"]] = {k: v for k, v in c.items() if k != "step"}
             cabs[it["cabinet"]]["step_hash"] = _file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"]) else c.get("step")
-    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma",)} for s in scenes}
+    sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma", "ground_reflection")} for s in scenes}
     return {"cabs": cabs, "scenes": sc, "solver": {k: v for k, v in (cfg.get("solver") or {}).items()
                                                  if k not in ("memory_gb", "cache_dir")},
             "air": cfg.get("air"), "freqs": np.round(freqs, 4).tolist(), "points": np.round(points, 5).tolist()}
@@ -243,7 +243,7 @@ def _acoustic_signature(cfg, scenes, freqs, points):
 
 def _field_signature(cfg, scenes, acoustic):
     return {"a": acoustic, "wiring": {s: (cfg.get("wiring") or {}).get(s) for s in scenes},
-            "drivers": cfg.get("drivers"), "ground": {s: cfg["scenes"][s].get("ground_sigma") for s in scenes}}
+            "drivers": cfg.get("drivers"), "ground": {s: [cfg["scenes"][s].get("ground_sigma"), cfg["scenes"][s].get("ground_reflection")] for s in scenes}}
 
 
 def _solve_group(job):

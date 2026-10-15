@@ -43,3 +43,12 @@ def test_floor_stats_flat_is_zero():
     st = floor_stats(f, p)
     for r in st["rows"].values():
         assert abs(r["p10"]) < 1e-9 and abs(r["p90"]) < 1e-9 and r["dips_pct"] == 0
+
+
+def test_tabulated_ground_reflection():
+    import types
+    from spkmod.system import SystemModel
+    r = types.SimpleNamespace(points=np.zeros((3, 3)), center=np.array([0, 0, 2.0]))
+    f = np.array([100.0, 500.0, 1414.2, 4000.0, 8000.0])
+    Q = SystemModel()._ground_factor(r, [[500, 1.0], [4000, 0.5]], f)
+    assert Q.shape == (5, 3) and np.allclose(Q[:, 0].real, [1.0, 1.0, 0.75, 0.5, 0.5], atol=1e-3)
