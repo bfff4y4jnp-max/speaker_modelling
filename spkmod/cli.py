@@ -132,7 +132,18 @@ def main(argv=None):
         if name == "report":
             p.add_argument("--out", default="report")
             p.add_argument("--preset")
+    ps = sub.add_parser("sweep", help="many variants of a project -> one comparison table")
+    ps.add_argument("spec")
+    ps.add_argument("--parallel", type=int, help="solves at once (memory and cores are split)")
+    ps.add_argument("--only", help="comma-separated variant names")
+    ps.add_argument("--dry-run", action="store_true", help="list variants and the solves needed")
+    ps.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "sweep":
+        _setup(a.verbose)
+        from .sweep import run_sweep
+        run_sweep(a.spec, a.parallel, a.only.split(",") if a.only else None, a.dry_run)
+        return
     if a.cmd == "cad":
         from .cadgen import build
         for spec in a.spec:

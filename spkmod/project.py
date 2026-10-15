@@ -22,8 +22,11 @@ from .system import SystemModel, listener_grid, log_freqs
 log = logging.getLogger("spkmod")
 
 
+_INFO_KEYS = ("source", "notes", "note", "comment")
+
+
 def _driver(name, d, air):
-    d = dict(d or {})
+    d = {k: v for k, v in dict(d or {}).items() if k not in _INFO_KEYS}   # documentation-only keys
     missing = [k for k, v in d.items() if v is None]
     if missing or not d:
         raise ValueError(f"driver {name!r}: fill in {missing or 'its parameters'} from the datasheet / measurement")
@@ -47,11 +50,16 @@ def _driver(name, d, air):
 
 
 class Project:
-    def __init__(self, path):
-        self.path = os.path.abspath(path)
-        self.dir = os.path.dirname(self.path)
-        with open(path) as fh:
-            self.cfg = yaml.safe_load(fh)
+    def __init__(self, path=None, cfg=None, base_dir=None):
+        """Load project.yml from `path`, or use an in-memory `cfg` dict (paths relative to base_dir)."""
+        if cfg is None:
+            self.path = os.path.abspath(path)
+            with open(path) as fh:
+                cfg = yaml.safe_load(fh)
+        else:
+            self.path = os.path.abspath(path or os.path.join(base_dir or ".", "project.yml"))
+        self.dir = os.path.abspath(base_dir) if base_dir else os.path.dirname(self.path)
+        self.cfg = cfg
         c = self.cfg
         self.air = Air(**c.get("air", {}))
         s = dict(c.get("solver", {}))
