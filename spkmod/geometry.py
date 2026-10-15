@@ -21,12 +21,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
 
+import dataclasses
 import logging
 
 import numpy as np
 
 SOLID, AIR, PISTON = 0, 1, 2
 KIND_RIGID, KIND_APERTURE, KIND_BODY = 0, 1, 2
+
+
+class MeshError(RuntimeError):
+    """gmsh could not mesh a scene; the message names the cabinet/piston involved where possible."""
 log = logging.getLogger("spkmod")
 
 
@@ -183,11 +188,129 @@ def _orient_outward(nodes, tris):
 
 
 # --------------------------------------------------------------------- build
-def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, verbose=False, surface_only=False):
+NUDGES_MM = (0.5, -0.5, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0)
+
+
+def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, verbose=False, surface_only=False,
+                     auto_fix=True, refine_gaps=False):
     """Build and mesh a scene. Returns SceneMesh.
 
     surface_only: mesh surfaces only (no air tetrahedra), for the reduced (reused-interior) solver.
+    refine_gaps: air gaps narrower than h/3 between facing CAD walls are always reported; True also
+        meshes them finer (size max(3 gap, h/4)); None skips the check.
+    auto_fix: if gmsh fails, find the piston whose parts (disc, frame ring, motor) make the
+        geometry unmeshable - usually a face or edge that almost touches a CAD face - and nudge
+        that driver along its axis by up to 3 mm (logged). Otherwise raise MeshError naming it.
     """
+    kw = dict(h=h, h_min=h_min, ground=ground, piston_divisions=piston_divisions, verbose=verbose,
+              surface_only=surface_only, refine_gaps=refine_gaps)
+    try:
+        return _build_scene_mesh(cabinets, **kw)
+    except Exception as exc:
+        first = _gmsh_msg(exc)
+    names = [(ci, pi, f"{c.name}.{p.name}") for ci, c in enumerate(cabinets) for pi, p in enumerate(c.pistons)]
+    culprits = []
+    for ci, pi, name in names:                 # which driver's parts break the geometry?
+        trial = list(cabinets)
+        trial[ci] = dataclasses.replace(cabinets[ci], pistons=[p for k, p in enumerate(cabinets[ci].pistons) if k != pi])
+        if _meshes(trial, kw):
+            culprits.append((ci, pi, name))
+    if not culprits:
+        bad = [c.name for c in cabinets if len(cabinets) > 1 and not _meshes([c], kw)]
+        raise MeshError(f"gmsh failed ({first}). It still fails with each piston removed, so the problem is in the "
+                        f"CAD solids{' of ' + ', '.join(bad) if bad else ''}: look for faces that almost touch "
+                        f"(gaps or steps under ~1 mm), tangent curved surfaces or thin slivers.")
+    parts = {}
+    for ci, pi, name in culprits:
+        p = cabinets[ci].pistons[pi]
+        what = []
+        if p.motor and _meshes(_with_piston(cabinets, ci, pi, motor=None), kw):
+            what.append("its motor (a motor face lies within ~1 mm of a CAD face)")
+        if _meshes(_with_piston(cabinets, ci, pi, cutout=None), kw):
+            what.append("its frame ring (the cutout circle coincides with or grazes a CAD edge/face)")
+        parts[name] = what or ["its disc"]
+    if auto_fix:
+        fixed = list(cabinets)
+        moved = []
+        for ci, pi, name in culprits:
+            p = fixed[ci].pistons[pi]
+            ax = np.asarray(p.axis, float) / np.linalg.norm(p.axis)
+            for d in NUDGES_MM:
+                trial = _with_piston(fixed, ci, pi, center=tuple(np.asarray(p.center, float) + ax * d / 1000))
+                if _meshes(trial, kw):
+                    fixed, _ = trial, moved.append(f"{name} by {d:+.1f} mm along its axis")
+                    break
+        if len(moved) == len(culprits):
+            log.warning("gmsh failed (%s) because of %s; meshed after moving %s. Move the piston in the "
+                        "cabinet spec to make this permanent.", first,
+                        "; ".join(f"{n}: {', '.join(w)}" for n, w in parts.items()), "; ".join(moved))
+            return _build_scene_mesh(fixed, **kw)
+    raise MeshError(f"gmsh failed ({first}) because of " + "; ".join(f"piston {n}: {', '.join(w)}" for n, w in parts.items())
+                    + ". Move the piston a few mm along its axis, or change its cutout/motor so its faces and "
+                    "edges do not touch the CAD faces" + (" (automatic nudges up to 3 mm did not help)" if auto_fix else ""))
+
+
+def _gmsh_msg(exc):
+    return str(exc).strip().splitlines()[0][:200] if str(exc).strip() else type(exc).__name__
+
+
+def _meshes(cabinets, kw):
+    try:
+        _build_scene_mesh(cabinets, **{**kw, "refine_gaps": None})
+        return True
+    except Exception:
+        return False
+
+
+def _with_piston(cabinets, ci, pi, **change):
+    out = list(cabinets)
+    ps = list(out[ci].pistons)
+    ps[pi] = dataclasses.replace(ps[pi], **change)
+    out[ci] = dataclasses.replace(out[ci], pistons=ps)
+    return out
+
+
+def _find_gaps(gmsh, cls, surf, vol_cab, cabinets, h, ground):
+    """Air gaps narrower than h/3 between two wall faces of the same scene (distance, faces, point)."""
+    walls = [s for s, (where, _, pay) in surf.items() if where == "wall" and pay != "driver"]   # CAD walls only
+    air = [t for t, (cat, _, _) in cls.items() if cat == AIR]
+    bb = {s: np.array(gmsh.model.getBoundingBox(2, s)) for s in walls}
+    curves = {s: {abs(c[1]) for c in gmsh.model.getBoundary([(2, s)], oriented=False)} for s in walls}
+    lim = h / 3
+    gaps = []
+    for i, a in enumerate(walls):
+        for b in walls[i + 1:]:
+            A, B = bb[a], bb[b]
+            if (np.maximum(A[:3] - B[3:], B[:3] - A[3:]) > lim).any() or curves[a] & curves[b]:
+                continue
+            d, *xyz = gmsh.model.occ.getDistance(2, a, 2, b)
+            if not (1e-6 < d < lim):
+                continue
+            pa, pb = np.array(xyz[:3]), np.array(xyz[3:])
+            if not _facing(gmsh, a, pa, b, pb):        # walls meeting at an angle (corners, wedges) are not gaps
+                continue
+            mid = (pa + pb) / 2
+            owner = next((v for v in air if gmsh.model.isInside(3, v, list(mid))), None)
+            # the whole segment between the walls must be air (not measured through a panel)
+            if owner is not None and all(any(gmsh.model.isInside(3, v, list(pa + t * (pb - pa))) for v in air)
+                                         for t in (0.1, 0.3, 0.7, 0.9)):
+                gaps.append((d, a, b, mid, cabinets[vol_cab[owner]].name if owner in vol_cab else "?"))
+    return gaps
+
+
+def _facing(gmsh, a, pa, b, pb, cos_min=0.94):
+    """True when the two faces are near-parallel at their closest points (within ~20 deg)."""
+    try:
+        na = np.array(gmsh.model.getNormal(a, gmsh.model.getParametrization(2, a, list(pa))))
+        nb = np.array(gmsh.model.getNormal(b, gmsh.model.getParametrization(2, b, list(pb))))
+    except Exception:
+        return False
+    na, nb = na / np.linalg.norm(na), nb / np.linalg.norm(nb)
+    return abs(float(na @ nb)) > cos_min
+
+
+def _build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, verbose=False, surface_only=False,
+                      refine_gaps=False):
     import gmsh
     h_min = h_min or h / 8
     gmsh.initialize()
@@ -213,15 +336,17 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 ax = np.asarray(p.axis, float) / np.linalg.norm(p.axis)
                 c = np.asarray(p.center, float)
                 base = c - ax * p.thickness / 2
-                pis = occ.addCylinder(*base, *(ax * p.thickness), p.diameter / 2)
+                r_p = p.diameter / 2
+                pis = occ.addCylinder(*base, *(ax * p.thickness), r_p)
                 local.append(((3, pis), PISTON, len(body_names)))
                 cut = p.cutout or 1.2 * p.diameter
-                fr = occ.addCylinder(*base, *(ax * p.thickness), cut / 2)
-                local.append(((3, fr), SOLID, None))
+                if cut / 2 > r_p * (1 + 1e-6):           # no zero-width frame ring
+                    fr = occ.addCylinder(*base, *(ax * p.thickness), cut / 2)
+                    local.append(((3, fr), SOLID, "driver"))
                 if p.motor:
                     md, mdep = p.motor
                     mo = occ.addCylinder(*(base), *(-ax * mdep), md / 2)
-                    local.append(((3, mo), SOLID, None))
+                    local.append(((3, mo), SOLID, "driver"))
                 body_names.append(f"{cab.name}.{p.name}")
                 body_axes.append(R @ ax)
                 body_centers.append(R @ c + T)
@@ -289,7 +414,7 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 a, b = (cls[v] for v in vols)
                 cats = {a[0], b[0]}
                 if cats == {AIR, SOLID}:
-                    surf[s] = ("wall", None, None)
+                    surf[s] = ("wall", None, a[1] if a[0] == SOLID else b[1])     # payload 'driver' for frames/motors
                 elif cats == {AIR, PISTON}:
                     pay = a[1] if a[0] == PISTON else b[1]
                     surf[s] = ("body", PISTON, pay)
@@ -307,11 +432,44 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 r = piston_r[payload]
                 pts = gmsh.model.getBoundary([(2, s)], recursive=True)
                 gmsh.model.mesh.setSize(pts, min(h, 2 * np.pi * r / (2 * piston_divisions)))
+        gap_note = gap_warn = None
+        if refine_gaps is not None:
+            gaps = _find_gaps(gmsh, cls, surf, vol_cab, cabinets, h, ground)
+            if gaps and refine_gaps:
+                smin, gaps_size = h, []
+                for d, a, b, mid, cname in gaps:
+                    size = min(h, max(1.5 * d, h_min))
+                    smin = min(smin, size)
+                    gaps_size.append(((a, b), size))
+                fields = []
+                for (a, b), size in gaps_size:
+                    fid = gmsh.model.mesh.field.add("Constant")
+                    gmsh.model.mesh.field.setNumbers(fid, "SurfacesList", [a, b])
+                    gmsh.model.mesh.field.setNumber(fid, "VIn", size)
+                    gmsh.model.mesh.field.setNumber(fid, "VOut", 1e22)
+                    fields.append(fid)
+                fmin = gmsh.model.mesh.field.add("Min")
+                gmsh.model.mesh.field.setNumbers(fmin, "FieldsList", fields)
+                gmsh.model.mesh.field.setAsBackgroundMesh(fmin)
+                seen = {}
+                for d, a, b, mid, cname in sorted(gaps):
+                    seen.setdefault((cname, round(d * 1000)), mid)
+                gap_note = "; ".join(f"{c}: {g} mm near ({m[0]:.2f}, {m[1]:.2f}, {m[2]:.2f})" for (c, g), m in seen.items())
+            if gaps and not refine_gaps:
+                seen = {}
+                for d, a, b, mid, cname in sorted(gaps):
+                    seen.setdefault((cname, round(d * 1000)), mid)
+                gap_warn = "; ".join(f"{c}: {g} mm near ({m[0]:.2f}, {m[1]:.2f}, {m[2]:.2f})" for (c, g), m in seen.items())
         solid_vols = [(3, t) for t, (cat, _, _) in cls.items() if cat != AIR]
         if solid_vols:
             occ.remove(solid_vols, recursive=False)
             occ.synchronize()
         gmsh.model.mesh.generate(2 if surface_only else 3)
+        if gap_note:
+            log.warning("narrow air gaps (< h/3 = %.0f mm) meshed finer: %s", h / 3 * 1000, gap_note)
+        if gap_warn:
+            log.warning("narrow air gaps (< h/3 = %.0f mm), meshed at h: %s. Set solver.refine_gaps: true to mesh "
+                        "them finer, or check with a smaller h_max", h / 3 * 1000, gap_warn)
 
         tags, x, _ = gmsh.model.mesh.getNodes()
         idmap = np.zeros(int(tags.max()) + 1, np.int64)

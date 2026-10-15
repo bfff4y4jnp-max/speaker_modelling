@@ -134,7 +134,7 @@ def cabinet_operator(cab, h, freqs, air, settings):
         return {k: z[k] for k in z.files}
     t0 = time.time()
     local = dataclasses.replace(cab, position=(0.0, 0.0, 0.0), rotation=(0.0, 0.0, 0.0))
-    mesh = build_scene_mesh([local], h, settings.h_min, ground=False, piston_divisions=settings.piston_divisions)
+    mesh = build_scene_mesh([local], h, settings.h_min, ground=False, piston_divisions=settings.piston_divisions, refine_gaps=settings.refine_gaps)
     nodes, nb = mesh.nodes, len(mesh.body_names)
     ap_tris = mesh.bem_tris[mesh.bem_kind == KIND_APERTURE]
     G, a = _shapes(nodes, mesh.body_tris, mesh.body_ids, mesh.body_centers, mesh.body_axes, nb)
@@ -171,7 +171,7 @@ def solve_band_reduced(cabinets, sub_bands, h, points, directions, ground, image
     rho, c = air.rho, air.c
     freqs = np.concatenate(sub_bands)
     mesh = build_scene_mesh(cabinets, h, settings.h_min, ground=ground, piston_divisions=settings.piston_divisions,
-                            surface_only=True)
+                            surface_only=True, refine_gaps=None)
     nodes, nb = mesh.nodes, len(mesh.body_names)
     ap = mesh.bem_kind == KIND_APERTURE
     bx = mesh.bem_kind == KIND_BODY
