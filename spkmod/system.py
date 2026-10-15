@@ -20,7 +20,8 @@ class SceneEntry:
     name: str
     result: object
     wiring: Wiring
-    ground_sigma: float = np.inf      # impedance ground for scenes solved without a BEM ground (needs T_img)
+    ground_sigma: object = np.inf     # scenes solved without a BEM ground (needs T_img): flow resistivity,
+                                      # inf (rigid) or an |R|(f) table [[f, R], ...]
 
 
 @dataclass
@@ -77,6 +78,13 @@ class SystemModel:
         return out
 
     def _ground_factor(self, r, sigma, f):
+        """Image-source factor. sigma: flow resistivity (Miki impedance ground, spherical-wave Q),
+        inf (rigid), or a table [[f, |R|], ...] (real, angle independent; log-f interpolation,
+        held constant outside), as the floor model's grass curve."""
+        if not np.isscalar(sigma):
+            tab = np.asarray(sigma, float)
+            R = np.interp(np.log(f), np.log(tab[:, 0]), tab[:, 1])
+            return np.broadcast_to(R[:, None], (len(f), len(r.points))).astype(complex)
         s = r.center
         img = s * [1, 1, -1]
         d = r.points - img

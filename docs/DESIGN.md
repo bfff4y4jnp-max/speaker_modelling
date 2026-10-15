@@ -94,6 +94,7 @@ keys with unit suffixes (`_mm`, `_cm2`, `_l`, `_mH`, `_g`) are converted.
 **Ground for elevated scenes.**
 * The scene is solved free-field and also evaluated at mirrored listener points.
 * The image contribution is multiplied by the spherical-wave reflection coefficient Q (Miki surface impedance, boundary-loss function F(w)) for the chosen flow resistivity. 200 kPa·s/m² is short grass.
+* Alternatively, set a scene's `ground_reflection: [[500, 1.0], [4000, 0.5]]` to use a tabulated real |R|(f), like the floor model's grass curve. It is interpolated in log f, held constant outside the table, and angle independent. It takes precedence over `ground_sigma`.
 * On-ground scenes (subs, low-mid) use the rigid BEM ground. Grass is effectively rigid below 300 Hz.
 
 ## 4. Speed
@@ -106,6 +107,7 @@ keys with unit suffixes (`_mm`, `_cm2`, `_l`, `_mH`, `_g`) are converted.
 | OpenCL CPU backend auto-selected (`pip install spkmod[fast]`) | 2.3× faster assembly, 5× less JIT warm-up |
 | Image folding for ground | LU on half the unknowns |
 | Multi-RHS: one factorisation per frequency for all drivers and apertures | Drivers are nearly free |
+| **Reused interiors** (`solver.interior: reuse`): each cabinet's interior FEM is reduced once to an operator on its openings. Layouts then couple it to the scene BEM through exact overlap areas | Identical boxes share one interior solve, and moving boxes redoes only the outside BEM. Within 0.05 dB driven SPL of the full solve |
 | Result cache + post-processing on stored transfer functions | DSP, presets and wiring changes are instant |
 | Memory budget (60% of free RAM, or `solver.memory_gb`) | The mesh coarsens with a warning instead of swapping. The same project runs on a 16 GB laptop or in the cloud |
 

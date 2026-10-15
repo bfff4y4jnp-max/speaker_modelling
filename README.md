@@ -56,6 +56,8 @@ Output in `sweeps/<name>/`:
 * `table.csv` and `table.txt`: per variant, zone and band, the median level (dB SPL at 0 dBFS), the change against the reference variant, tonal p10/p90 and rms, holes over 6 and 3 dB, and peak excursion;
 * the per-channel fields (`fields/*.npz`), so further offline changes need no solve.
 
+Sweeps solve with `solver.interior: reuse` by default. Each cabinet's interior FEM is solved once in its own frame, reduced to its openings and cached, so identical boxes and new layouts only redo the outside BEM. Against the full coupled solve it agrees to within 0.05 dB in driven SPL (`tests/test_reduced.py`). Set `interior: full` to force the full solve.
+
 Comparisons:
 ```bash
 spkmod compare sweeps/sub_layouts --a m2m --b line4                 # difference table B - A per zone and band

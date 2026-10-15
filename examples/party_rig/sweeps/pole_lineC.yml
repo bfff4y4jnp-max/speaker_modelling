@@ -1,0 +1,16 @@
+# Pole box above the low-mid when the low-mid sits in the middle of the sub line (line2 C: sub, LM, sub, mouths
+# flush at the stack face x = 0). The pole box baffle front moves from x 0.95 to x 0 (box bottom stays 2.69 m).
+# Free-field BEM; grass added at system level (ground_sigma in project.yml). DSP flat: per-V fields per channel,
+# so the integration thread applies its own filters offline.
+#   spkmod sweep examples/party_rig/sweeps/pole_lineC.yml --dry-run
+project: ../project.yml
+scenes: [pole]
+frequencies: {min: 200, max: 3000, per_octave: 12}
+dsp: flat
+bands: sixth
+reference: now
+variants:
+  - name: now             # baffle at x 0.95, above the low-mid mouth in front of the stack
+  - name: lineC           # baffle at the stack face, above the low-mid in the middle of the sub line
+    move:
+      pole: {position: [-0.22, -0.18, 2.69], rotation: [0, 0, 0]}
