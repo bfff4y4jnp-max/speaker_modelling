@@ -106,6 +106,7 @@ keys with unit suffixes (`_mm`, `_cm2`, `_l`, `_mH`, `_g`) are converted.
 | OpenCL CPU backend auto-selected (`pip install spkmod[fast]`) | 2.3× faster assembly, 5× less JIT warm-up |
 | Image folding for ground | LU on half the unknowns |
 | Multi-RHS: one factorisation per frequency for all drivers and apertures | Drivers are nearly free |
+| **Reused interiors** (`solver.interior: reuse`): each cabinet's interior FEM is reduced once to an operator on its openings. Layouts then couple it to the scene BEM through exact overlap areas | Identical boxes share one interior solve, and moving boxes redoes only the outside BEM. Within 0.05 dB driven SPL of the full solve |
 | Result cache + post-processing on stored transfer functions | DSP, presets and wiring changes are instant |
 | Memory budget (60% of free RAM, or `solver.memory_gb`) | The mesh coarsens with a warning instead of swapping. The same project runs on a 16 GB laptop or in the cloud |
 

@@ -39,7 +39,8 @@ sweep.yml (paths relative to the sweep file):
 
 Outputs in `out`: table.csv, table.txt, fields/<key>.npz (per-channel pressure per volt, excursion per
 volt, impedance) and variants/<variant>.npz (per-frequency zone medians, total pressure).
-Solves are cached in the project's cache_dir by content, and each band group is saved as it finishes,
+Sweeps default to solver.interior: reuse (each cabinet's interior solved once; set `full` in the
+project or a variant's `project:` to force the coupled solve). Solves are cached in the project's cache_dir by content, and each band group is saved as it finishes,
 so an interrupted sweep resumes where it stopped.
 """
 from __future__ import annotations
@@ -353,6 +354,7 @@ def run_sweep(path, parallel=None, only=None, dry_run=False):
         if c.get("step") and not os.path.isabs(c["step"]):
             c["step"] = os.path.join(proj_dir, c["step"])
     solver = base_cfg.setdefault("solver", {})
+    solver.setdefault("interior", "reuse")      # layouts change between variants: solve each cabinet's interior once
     solver["cache_dir"] = os.path.join(proj_dir, solver.get("cache_dir") or ".spkmod_cache")
     if spec.get("frequencies"):
         base_cfg["frequencies"] = spec["frequencies"]
