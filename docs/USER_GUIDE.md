@@ -38,6 +38,7 @@ What it does:
 Rules of thumb:
 * **One sweep file per push.** If several change in one push, only the first is solved (with a warning); start the others with Run workflow.
 * **Never edit `runs/<name>/` by hand.** To start over, delete `runs/<name>/fields/`.
+* **If any variant ends up with no solved fields, the merge fails loudly.** The run goes red, `table.txt` starts with an `!! INCOMPLETE` line naming the variants, and the partial table is kept as the run's `results-<name>` artifact. Nothing is committed.
 * **Runner type** is the repo variable `SPKMOD_RUNNER` (default `ubuntu-latest`). Larger paid runners work unchanged.
 * **Run time:** the `sub_layouts` example (8 variants, 4 solves, 67 frequencies, 1096 listener points) runs as 12 shards of about 2–3 minutes each.
 

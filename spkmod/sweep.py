@@ -146,7 +146,7 @@ def _generate_cabinet(name, gen, sweep_dir, out_dir, proj_dir):
             json.dump(pistons, fh)
     with open(pist_file) as fh:
         pistons = json.load(fh)
-    return {"step": os.path.abspath(step), "pistons": pistons, **extra}
+    return {"step": os.path.abspath(step), "pistons": pistons, "spec_hash": h, **extra}
 
 
 def apply_variant(cfg, v, scenes, sweep_dir, out_dir, proj_dir):
@@ -232,7 +232,9 @@ def _acoustic_signature(cfg, scenes, freqs, points):
         for it in cfg["scenes"][s]["items"]:
             c = cfg["cabinets"][it["cabinet"]]
             cabs[it["cabinet"]] = {k: v for k, v in c.items() if k != "step"}
-            cabs[it["cabinet"]]["step_hash"] = _file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"]) else c.get("step")
+            if "spec_hash" not in c:        # generated cabinets are keyed by their spec, not the STEP bytes
+                cabs[it["cabinet"]]["step_hash"] = (_file_hash(c["step"]) if c.get("step") and os.path.isabs(c["step"])
+                                                    else c.get("step"))
     sc = {s: {k: v for k, v in cfg["scenes"][s].items() if k not in ("ground_sigma", "ground_reflection")} for s in scenes}
     return {"cabs": cabs, "scenes": sc, "solver": {k: v for k, v in (cfg.get("solver") or {}).items()
                                                  if k not in ("memory_gb", "cache_dir")},
@@ -464,6 +466,7 @@ def tables(ctx):
     ref_csv = os.path.join(sweep_dir, ref_csv) if ref_csv and not os.path.isabs(ref_csv) else ref_csv
     ref = spec.get("reference") or plan[0][0]
     bands = None
+    missing = [vname for vname, v, cfg, fpath in plan if not os.path.exists(fpath)]
     for vname, v, cfg, fpath in plan:
         if not os.path.exists(fpath):
             continue
@@ -507,13 +510,22 @@ def tables(ctx):
               "ref_p90", "model_holes6_pct", "ref_holes6_pct", "model_holes3_pct", "ref_holes3_pct"]
         _write_csv(os.path.join(out_dir, "reference.csv"), refrows, rk)
         extra = "\n\n" + format_reference(refrows, os.path.basename(ref_csv))
+    if missing:
+        extra = (f"\n\n!! INCOMPLETE: no solved fields for {len(missing)} of {len(plan)} variants: "
+                 + ", ".join(missing) + extra)
     txt = (f"sweep {name}  (dsp: {mode}, reference: {ref}, levels dB SPL at 0 dBFS program, "
            f"spreads/holes at 1/{smoothing} oct)\n" + format_table(rows) + extra)
     with open(os.path.join(out_dir, "table.txt"), "w") as fh:
         fh.write(txt + "\n")
     print(txt)
     print(f"\nwritten: {os.path.join(out_dir, 'table.csv')}, table.txt, fields/, variants/")
+    if missing:
+        raise SweepIncomplete(f"no solved fields for {len(missing)} of {len(plan)} variants: {', '.join(missing)}")
     return rows
+
+
+class SweepIncomplete(RuntimeError):
+    """Some variants have no solved fields: the table was written without them."""
 
 
 # --------------------------------------------------------------------------- sharding (GitHub Actions, Slurm)
