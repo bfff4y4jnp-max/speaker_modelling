@@ -186,11 +186,22 @@ class ExteriorBEM:
     def _fold(self, Au, Bu):
         return np.asarray(Au @ self.F), np.asarray(Bu @ self.Fe)
 
-    def band(self, kmin, kmax, n_nodes=None):
-        """Precompute interpolation data for wavenumbers in [kmin, kmax]."""
+    def band(self, kmin, kmax, n_nodes=None, ks_needed=None):
+        """Precompute interpolation data for wavenumbers in [kmin, kmax].
+
+        ks_needed: the wavenumbers that will be requested; when there are no more of them than
+        interpolation nodes they are used as the nodes (exact, fewer assemblies).
+        """
         D = float(self._R11.max()) if self.n else 0.0
         if n_nodes is None:
             n_nodes = int(np.clip(np.ceil((kmax - kmin) * D / 4) + 3, 3, 9))
+        if ks_needed is not None and 0 < len(ks_needed) <= n_nodes:
+            ks = np.unique(np.asarray(ks_needed, float))
+            data = []
+            for k in ks:
+                Au, Bu = self._assemble_union(k)
+                data.append((Au * np.exp(-1j * k * self._R11), Bu * np.exp(-1j * k * self._R10)))
+            return _Band(self, ks, data)
         if kmax - kmin < 1e-9 or n_nodes <= 1:
             n_nodes = 1
             ks = np.array([0.5 * (kmin + kmax)])

@@ -21,10 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
 
+import logging
+
 import numpy as np
 
 SOLID, AIR, PISTON = 0, 1, 2
 KIND_RIGID, KIND_APERTURE, KIND_BODY = 0, 1, 2
+log = logging.getLogger("spkmod")
 
 
 @dataclass
@@ -74,6 +77,7 @@ class SceneMesh:
     h: float
     body_area: np.ndarray = None  # true radiating area per body (one side)
     ap_group: np.ndarray = None   # per aperture triangle: CAD surface id (mouth / port grouping)
+    ap_cab: np.ndarray = None     # per aperture triangle: index of the cabinet whose air it opens
 
     @property
     def aperture_tris(self):
@@ -179,8 +183,11 @@ def _orient_outward(nodes, tris):
 
 
 # --------------------------------------------------------------------- build
-def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, verbose=False):
-    """Build and mesh a scene. Returns SceneMesh."""
+def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, verbose=False, surface_only=False):
+    """Build and mesh a scene. Returns SceneMesh.
+
+    surface_only: mesh surfaces only (no air tetrahedra), for the reduced (reused-interior) solver.
+    """
     import gmsh
     h_min = h_min or h / 8
     gmsh.initialize()
@@ -255,10 +262,13 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 rank = {PISTON: 3, SOLID: 2}.get(cat, 1 if payload is not None else 0)
                 if rank > prev[2]:
                     cls[t] = (cat, payload, rank)
-        env_pieces = set()
+        env_pieces, vol_cab = set(), {}
         for (dt, cat, payload), pieces in zip(inputs, outmap):
             if dt[1] in envelopes:
                 env_pieces |= {t for d, t in pieces if d == 3}
+                for d, t in pieces:
+                    if d == 3:
+                        vol_cab[t] = envelopes.index(dt[1])
         outside = [t for t in cls if t not in env_pieces]
         if outside:
             occ.remove([(3, t) for t in outside], recursive=True)
@@ -267,13 +277,14 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 cls.pop(t)
 
         # surface classification
-        surf = {}
+        surf, surf_cab = {}, {}
         for _, s in gmsh.model.getEntities(2):
             up, _ = gmsh.model.getAdjacencies(2, s)
             vols = [v for v in up if v in cls]
             if len(vols) == 1:
                 cat, payload, _ = cls[vols[0]]
                 surf[s] = ("outer", cat, payload)
+                surf_cab[s] = vol_cab.get(vols[0], -1)
             elif len(vols) == 2:
                 a, b = (cls[v] for v in vols)
                 cats = {a[0], b[0]}
@@ -282,6 +293,9 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                 elif cats == {AIR, PISTON}:
                     pay = a[1] if a[0] == PISTON else b[1]
                     surf[s] = ("body", PISTON, pay)
+                elif cats == {AIR} and vol_cab.get(vols[0]) != vol_cab.get(vols[1]):
+                    log.warning("air of cabinets %s and %s touches: the reduced solver treats that face as rigid",
+                                cabinets[vol_cab.get(vols[0])].name, cabinets[vol_cab.get(vols[1])].name)
         # mesh sizes
         gmsh.option.setNumber("Mesh.MeshSizeMax", h)
         gmsh.option.setNumber("Mesh.MeshSizeMin", h_min)
@@ -297,7 +311,7 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
         if solid_vols:
             occ.remove(solid_vols, recursive=False)
             occ.synchronize()
-        gmsh.model.mesh.generate(3)
+        gmsh.model.mesh.generate(2 if surface_only else 3)
 
         tags, x, _ = gmsh.model.mesh.getNodes()
         idmap = np.zeros(int(tags.max()) + 1, np.int64)
@@ -316,7 +330,7 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
             treg.append(np.full(len(tn) // 4, rid))
         groups = {k: [] for k in ("rigid", "aperture", "bodyext", "wall", "bodyint")}
         gbody = {"bodyext": [], "bodyint": []}
-        ap_group = []
+        ap_group, ap_cab = [], []
         for s, (where, cat, payload) in surf.items():
             _, tn = gmsh.model.mesh.getElementsByType(2, s)
             tri = idmap[tn.astype(np.int64)].reshape(-1, 3)
@@ -326,6 +340,7 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
                     groups["wall" if on_ground else "aperture"].append(tri)
                     if not on_ground:
                         ap_group.append(np.full(len(tri), s))
+                        ap_cab.append(np.full(len(tri), surf_cab.get(s, -1)))
                     if on_ground:
                         groups["rigid"].append(tri)  # keeps the exterior surface closed (dropped by BEM)
                 elif cat == PISTON:
@@ -364,4 +379,5 @@ def build_scene_mesh(cabinets, h, h_min=None, ground=True, piston_divisions=16, 
         body_names=body_names, body_axes=np.array(body_axes).reshape(-1, 3),
         body_centers=np.array(body_centers).reshape(-1, 3), h=h,
         body_area=np.pi * np.asarray(piston_r) ** 2,
-        ap_group=np.concatenate(ap_group) if ap_group else np.zeros(0, int))
+        ap_group=np.concatenate(ap_group) if ap_group else np.zeros(0, int),
+        ap_cab=np.concatenate(ap_cab) if ap_cab else np.zeros(0, int))

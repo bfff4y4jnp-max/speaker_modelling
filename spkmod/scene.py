@@ -45,6 +45,8 @@ class SolverSettings:
     memory_gb: Optional[float] = None        # budget; default 60 % of available
     piston_divisions: int = 16
     cache_dir: Optional[str] = ".spkmod_cache"
+    interior: str = "full"                   # "full": one coupled FEM-BEM per scene; "reuse": each cabinet's
+                                             # interior FEM solved once in its own frame (fast layout changes)
 
 
 @dataclass
@@ -171,6 +173,14 @@ def solve_scene(cabinets, freqs, points=None, directions=None, ground=True, imag
             log.info("resuming: band group %d from %s", gi, part_path)
             parts.append(_load_part(part_path))
             continue
+        if settings.interior == "reuse":
+            from .reduced import solve_band_reduced
+            parts.append(solve_band_reduced(cabinets, sub, h, points, directions, ground, image_points, air, settings))
+            log.info("bands up to %g Hz: %s", fmax, parts[-1]["mesh"])
+            if part_path:
+                os.makedirs(settings.cache_dir, exist_ok=True)
+                _save_part(part_path, parts[-1])
+            continue
         for attempt in range(4):
             mesh = build_scene_mesh(cabinets, h, settings.h_min, ground=ground,
                                     piston_divisions=settings.piston_divisions)
@@ -289,7 +299,8 @@ def _solve_band(mesh, sub_bands, points, directions, ground, image_points, air, 
         k = w / c
         if band_of[i] != band_id:          # frequency-interpolation set for this sub-band
             fb = sub_bands[band_of[i]]
-            band, band_id = bem.band(2 * np.pi * fb.min() / c, 2 * np.pi * fb.max() / c), band_of[i]
+            band, band_id = bem.band(2 * np.pi * fb.min() / c, 2 * np.pi * fb.max() / c,
+                                     ks_needed=2 * np.pi * np.asarray(fb) / c), band_of[i]
         P = band.solve(k)                       # (n, n_active) per unit dp/dn
         P_a, P_b = P[:, :n_a], P[:, n_a:]
         if has_fem and n_a:
