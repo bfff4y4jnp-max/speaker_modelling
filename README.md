@@ -1,5 +1,7 @@
 # speaker_modelling: `spkmod`
 
+> **New here? Read the [USER GUIDE](docs/USER_GUIDE.md).** It covers the file formats, commands, free GitHub runs, outputs and metric definitions. Methods and validation are in [DESIGN.md](docs/DESIGN.md).
+
 3D FEM/BEM modelling of loudspeakers and complete sound systems from CAD (STEP).
 Coupled interior FEM (scikit-fem) and exterior BEM (bempp-cl) solve the cabinets.
 Thiele-Small drivers, CamillaDSP filters, amps, a grass ground and a listener grid

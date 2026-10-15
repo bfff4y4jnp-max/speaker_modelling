@@ -1,3 +1,5 @@
+> **Superseded.** This was the one-off handover used to create the party-rig inputs, before the design project could see the repo. For current formats and workflow, use [USER_GUIDE.md](USER_GUIDE.md).
+
 # Handover: Outdoor Party Rig design project → `speaker_modelling` repo
 
 **For:** the Claude design project that produced the *Outdoor Party Rig (rev 2)* page, and Peter.
