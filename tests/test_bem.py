@@ -67,3 +67,18 @@ def test_pulsating_sphere(hemi):
     Df, Sf = bem.field_matrices(np.array([[0, 0, 1.0]]), k, far=True)
     A = pulsating(k, 1.0) * np.exp(-1j * k)
     assert abs((Df @ p - Sf @ g)[0] / A - 1) < 0.02
+
+
+def test_opencl_failure_falls_back_to_numba(monkeypatch):
+    import spkmod.bem as bem
+    monkeypatch.setattr(bem, "_DEVICE", "opencl")
+    calls = []
+
+    def make(d):
+        calls.append(d)
+        if d == "opencl":
+            raise RuntimeError("clBuildProgram failed: BUILD_PROGRAM_FAILURE\nerror: unknown target CPU 'generic'")
+        return d
+
+    monkeypatch.setattr(bem, "_dense", lambda x: x)
+    assert bem._with_fallback(make) == "numba" and calls == ["opencl", "numba"] and bem.device() == "numba"
