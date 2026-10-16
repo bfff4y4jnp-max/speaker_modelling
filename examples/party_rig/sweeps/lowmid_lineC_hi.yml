@@ -1,0 +1,21 @@
+# Low-mid at position C of the build layout line2c (sub, low-mid, sub; mouths flush at the stack face x = 0), for
+# the integration thread: 3D through the 350 Hz handover to the pole. Low-mid with the 10 mm front gap (low-mid
+# thread) and the cone dish as spkmod's native 30 mm piston recess (recess30, adopted build). Subs in place
+# (passive). Frame cutout 290 mm (282 = the hole bore can mesh with no interior air). Same 1005 floor spots and
+# per-V phase convention as spkmod_runs/lm_place_line2C.npz. Geometry: cad/lmC/lowmid_lmC_gap10.yml
+# (outdoor_lowmid/lm3d_variants.py spec(gap=10), flat piston at baffle mid-thickness).
+project: ../project.yml
+scenes: [stack]
+frequencies: {min: 200, max: 600, per_octave: 24}
+dsp: flat
+bands: sixth
+variants:
+  - name: lmC_gap10_r30
+    remove: [sub_rear_l, sub_rear_r]
+    move: {sub_front_l: {position: [-1.216, 0.338, 0.0], rotation: [0, 0, 0]}, sub_front_r: {position: [-1.216, -0.888, 0.0], rotation: [0, 0, 0]}, lowmid: {position: [-0.496, -0.338, 0.0], rotation: [0, 0, 0]}}
+    replace: {lowmid: {cabinet: lowmid_lmC_gap10}}
+    project:
+      solver: {refine_gaps: true}
+      scenes: {stack: {max_freq: 600}}
+      cabinets:
+        lowmid_lmC_gap10: {step: cad/lmC/lowmid_lmC_gap10.step, pistons: [{name: drv_a, center: [0.2604, 0.178, 0.2839], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07], recess: 0.03}, {name: drv_b, center: [0.2604, 0.498, 0.2839], axis: [0.2425, 0.0, -0.9701], sd_cm2: 510.7, cutout: 0.29, thickness: 0.008, motor: [0.156, 0.07], recess: 0.03}]}
